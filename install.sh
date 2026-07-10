@@ -32,6 +32,23 @@ sub(){ printf '    %s\n' "$*"; }
 warn(){ printf '\033[1;33mNote:\033[0m %s\n' "$*"; }
 err(){ printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; }
 
+# ---- jq is REQUIRED: adapters parse the agent's hook JSON with it, and the
+#      installer edits settings.json with it. Without jq, capture silently no-ops.
+ensure_jq(){
+    command -v jq >/dev/null 2>&1 && return 0
+    warn "jq is required but missing — attempting to install it…"
+    if   command -v apt-get >/dev/null 2>&1; then { sudo -n apt-get install -y jq || sudo apt-get install -y jq; } >/dev/null 2>&1
+    elif command -v brew    >/dev/null 2>&1; then brew install jq >/dev/null 2>&1
+    elif command -v dnf     >/dev/null 2>&1; then sudo dnf install -y jq >/dev/null 2>&1
+    elif command -v yum     >/dev/null 2>&1; then sudo yum install -y jq >/dev/null 2>&1
+    elif command -v pacman  >/dev/null 2>&1; then sudo pacman -S --noconfirm jq >/dev/null 2>&1
+    elif command -v apk     >/dev/null 2>&1; then sudo apk add jq >/dev/null 2>&1; fi
+    if command -v jq >/dev/null 2>&1; then msg "installed jq"; else
+        err "jq is MISSING and could not be auto-installed — agentps capture will NOT work."
+        err "Install it, then re-run this installer:  sudo apt-get install -y jq   (or brew/dnf/yum/apk)"
+    fi
+}
+
 # ---- agent detection ----
 detect_agents(){
     local a=()
@@ -109,6 +126,7 @@ AGENTS="${AGENTS//,/ }"
 [ -n "$AGENTS" ] || AGENTS="$(detect_agents)"
 
 if [ "$ACTION" = install ]; then
+    ensure_jq
     if [ "$SKIP_CLI" = 0 ]; then
         msg "CLI      -> $BIN_DEST"
         mkdir -p "$BINDIR"; install -m 0755 "$here/bin/agentps" "$BIN_DEST"
