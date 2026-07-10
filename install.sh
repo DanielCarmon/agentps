@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# procview installer.  Vibecoded by Daniel Carmon and Claude Opus 4.8.  GPL-3.0-or-later.
+# agentps installer.  Vibecoded by Daniel Carmon and Claude Opus 4.8.  GPL-3.0-or-later.
 #
-# Installs the `procview` CLI, the shared capture core, and a capture adapter for
+# Installs the `agentps` CLI, the shared capture core, and a capture adapter for
 # each AI coding agent you use (Claude Code, Codex, OpenCode). Every agent tees
-# its shell commands into ~/.runlogs so `procview` can show them live.
+# its shell commands into ~/.runlogs so `agentps` can show them live.
 #
 #   ./install.sh                      install CLI + core + auto-detected agents
 #   ./install.sh --agent claude,opencode   install for specific agents
@@ -19,9 +19,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PREFIX="${PREFIX:-$HOME/.local}"
 BINDIR="$PREFIX/bin"
-COREDIR="$HOME/.local/share/procview"
+COREDIR="$HOME/.local/share/agentps"
 CORE_DEST="$COREDIR/capture-core.sh"
-BIN_DEST="$BINDIR/procview"
+BIN_DEST="$BINDIR/agentps"
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -63,34 +63,34 @@ deregister_json_hook(){ # $1=file $2=cmd
 
 # ---- per-agent wiring ----
 wire_claude(){
-    local dest="$CLAUDE_DIR/hooks/procview-capture.sh"
+    local dest="$CLAUDE_DIR/hooks/agentps-capture.sh"
     mkdir -p "$CLAUDE_DIR/hooks"; install -m 0755 "$here/adapters/claude-code/hook.sh" "$dest"
     register_json_hook "$CLAUDE_DIR/settings.json" "$dest" claude
     sub "Claude Code   -> $dest  (registered in settings.json)"
 }
 unwire_claude(){
-    local dest="$CLAUDE_DIR/hooks/procview-capture.sh"
+    local dest="$CLAUDE_DIR/hooks/agentps-capture.sh"
     deregister_json_hook "$CLAUDE_DIR/settings.json" "$dest"; rm -f "$dest"
     sub "Claude Code   removed"
 }
 wire_codex(){
-    local dest="$CODEX_DIR/hooks/procview-capture.sh"
+    local dest="$CODEX_DIR/hooks/agentps-capture.sh"
     mkdir -p "$CODEX_DIR/hooks"; install -m 0755 "$here/adapters/codex/hook.sh" "$dest"
     register_json_hook "$CODEX_DIR/hooks.json" "$dest" codex
     sub "Codex (exp.)  -> $dest  (registered in hooks.json)"
 }
 unwire_codex(){
-    local dest="$CODEX_DIR/hooks/procview-capture.sh"
+    local dest="$CODEX_DIR/hooks/agentps-capture.sh"
     deregister_json_hook "$CODEX_DIR/hooks.json" "$dest"; rm -f "$dest"
     sub "Codex         removed"
 }
 wire_opencode(){
     mkdir -p "$OPENCODE_DIR/plugin"
-    install -m 0644 "$here/adapters/opencode/procview-capture.ts" "$OPENCODE_DIR/plugin/procview-capture.ts"
-    sub "OpenCode      -> $OPENCODE_DIR/plugin/procview-capture.ts  (auto-loads)"
+    install -m 0644 "$here/adapters/opencode/agentps-capture.ts" "$OPENCODE_DIR/plugin/agentps-capture.ts"
+    sub "OpenCode      -> $OPENCODE_DIR/plugin/agentps-capture.ts  (auto-loads)"
 }
 unwire_opencode(){
-    rm -f "$OPENCODE_DIR/plugin/procview-capture.ts"
+    rm -f "$OPENCODE_DIR/plugin/agentps-capture.ts"
     sub "OpenCode      removed"
 }
 
@@ -111,7 +111,7 @@ AGENTS="${AGENTS//,/ }"
 if [ "$ACTION" = install ]; then
     if [ "$SKIP_CLI" = 0 ]; then
         msg "CLI      -> $BIN_DEST"
-        mkdir -p "$BINDIR"; install -m 0755 "$here/bin/procview" "$BIN_DEST"
+        mkdir -p "$BINDIR"; install -m 0755 "$here/bin/agentps" "$BIN_DEST"
     fi
     msg "Core     -> $CORE_DEST"
     mkdir -p "$COREDIR"; install -m 0755 "$here/lib/capture-core.sh" "$CORE_DEST"
@@ -128,9 +128,9 @@ if [ "$ACTION" = install ]; then
     if [ "$SKIP_CLI" = 0 ]; then
         case ":$PATH:" in *":$BINDIR:"*) : ;; *) warn "$BINDIR not on PATH — add: export PATH=\"$BINDIR:\$PATH\"" ;; esac
     fi
-    msg "Done. Start a NEW agent session (hooks load at startup), then run:  procview"
+    msg "Done. Start a NEW agent session (hooks load at startup), then run:  agentps"
 else
-    msg "Uninstalling procview"
+    msg "Uninstalling agentps"
     for ag in claude codex opencode; do
         case "$ag" in claude) unwire_claude ;; codex) unwire_codex ;; opencode) unwire_opencode ;; esac
     done

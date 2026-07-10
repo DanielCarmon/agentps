@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Claude Code PreToolUse adapter for procview.  GPL-3.0-or-later.
+# Claude Code PreToolUse adapter for agentps.  GPL-3.0-or-later.
 # Vibecoded by Daniel Carmon and Claude Opus 4.8.
 #
 # Parses Claude Code's PreToolUse JSON (stdin), asks the shared capture core to
 # wrap the command, and returns it via updatedInput. Fail-open; disable with
 # RUNLOG_HOOK_OFF=1. The permission model is untouched (no permissionDecision).
 
-CORE="${PROCVIEW_CORE:-$HOME/.local/share/procview/capture-core.sh}"
+CORE="${AGENTPS_CORE:-$HOME/.local/share/agentps/capture-core.sh}"
 
 input="$(cat)"
 [ "${RUNLOG_HOOK_OFF:-0}" = "1" ] && exit 0

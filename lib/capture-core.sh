@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# procview capture core — agent-agnostic.  Vibecoded by Daniel Carmon and Claude Opus 4.8.  GPL-3.0-or-later.
+# agentps capture core — agent-agnostic.  Vibecoded by Daniel Carmon and Claude Opus 4.8.  GPL-3.0-or-later.
 #
 # One source of truth for wrapping a shell command so its live output is tee'd to
-# a per-command logfile that `procview` can display. Every agent adapter (Claude
+# a per-command logfile that `agentps` can display. Every agent adapter (Claude
 # Code hook, Codex hook, OpenCode plugin) funnels through this.
 #
 # Inputs (via environment):

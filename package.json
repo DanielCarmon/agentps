@@ -1,7 +1,7 @@
 {
-  "name": "procview",
+  "name": "agentps",
   "version": "0.1.0",
-  "description": "See and live-watch every shell command your AI coding agent (Claude Code, Codex, OpenCode) runs — with live CPU/RAM per process.",
+  "description": "ps/top for your AI coding agent — see and live-watch every shell command Claude Code, Codex, or OpenCode runs, with live CPU/RAM per process.",
   "keywords": [
     "claude-code",
     "codex",
@@ -10,22 +10,23 @@
     "agent",
     "hook",
     "process-monitor",
+    "ps",
     "htop",
     "tui",
     "observability"
   ],
   "license": "GPL-3.0-or-later",
   "author": "Daniel Carmon",
-  "homepage": "https://github.com/DanielCarmon/procview#readme",
+  "homepage": "https://github.com/DanielCarmon/agentps#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DanielCarmon/procview.git"
+    "url": "git+https://github.com/DanielCarmon/agentps.git"
   },
   "bugs": {
-    "url": "https://github.com/DanielCarmon/procview/issues"
+    "url": "https://github.com/DanielCarmon/agentps/issues"
   },
   "bin": {
-    "procview": "bin/procview"
+    "agentps": "bin/agentps"
   },
   "files": [
     "bin/",

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# procview — see, and live-watch, every shell command your AI coding agent runs.
-# Works with Claude Code, Codex, and OpenCode. Home: https://github.com/DanielCarmon/procview
+# agentps — like ps/top, but for the processes your AI coding agent runs.
+# Works with Claude Code, Codex, and OpenCode. Home: https://github.com/DanielCarmon/agentps
 #
 # Copyright (C) 2026 Daniel Carmon.  Vibecoded by Daniel Carmon and Claude Opus 4.8.
 # GNU General Public License v3.0 or later — see LICENSE / <https://www.gnu.org/licenses/>.
@@ -383,14 +383,14 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         clean)          shift; procclean "${1:-}" ;;
         -h|--help|help)
             printf '%s\n' \
-              "procview — live viewer for every shell command your AI coding agent runs" \
+              "agentps — view the processes your AI coding agent runs (Claude Code, Codex, OpenCode)" \
               "" \
               "usage:" \
-              "  procview [all|<session>]   interactive TUI (default: newest session)" \
-              "  procview watch [all]       read-only auto-refreshing dashboard" \
-              "  procview last              live-tail the most recent command" \
-              "  procview list [all]        one-shot table (no TUI)" \
-              "  procview clean [days]      prune capture logs older than N days (default 7)" \
+              "  agentps [all|<session>]   interactive TUI (default: newest session)" \
+              "  agentps watch [all]       read-only auto-refreshing dashboard" \
+              "  agentps last              live-tail the most recent command" \
+              "  agentps list [all]        one-shot table (no TUI)" \
+              "  agentps clean [days]      prune capture logs older than N days (default 7)" \
               "" \
               "keys:  up/down select . left/right view-mode . Enter open . Tab go-to-# . q quit" ;;
         *)              procview "${1:-}" ;;

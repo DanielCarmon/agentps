@@ -1,9 +1,10 @@
-# procview
+# agentps
 
-**See — and live-watch — every shell command your AI coding agent runs.**
+**`ps`/`top` for your AI coding agent.** See — and live-watch — every shell
+command it runs.
 
 Works with **Claude Code**, **Codex**, and **OpenCode**. When your agent runs a
-shell command, procview tees it — automatically, no cooperation from the model —
+shell command, agentps tees it — automatically, no cooperation from the model —
 into a per-command logfile under `~/.runlogs/`, and a terminal UI lets you browse
 them, follow any one live, and watch real-time **CPU/RAM** per process.
 
@@ -20,18 +21,18 @@ agent's own one-line **description**, and the **command**.
 
 ## Install
 
-**npm** (once the box has Node):
+**npm:**
 ```sh
-npm install -g procview
+npm install -g agentps
 ```
 
 **git** (zero Node dependency — just bash + jq):
 ```sh
-git clone https://github.com/DanielCarmon/procview
-cd procview && make install
+git clone https://github.com/DanielCarmon/agentps
+cd agentps && make install
 ```
 
-Either way this installs the `procview` CLI and wires up a capture adapter for
+Either way this installs the `agentps` CLI and wires up a capture adapter for
 each agent it detects (Claude Code, Codex, OpenCode). **Start a new agent
 session** afterwards — hooks load at startup. Pick specific agents with
 `./install.sh --agent claude,opencode`.
@@ -41,12 +42,12 @@ Requirements: `bash` 4.2+, `jq`, `tput`; `tmux`/`less`/`vim` for the viewers.
 ## Usage
 
 ```sh
-procview                 # interactive TUI (newest session)
-procview all             # every session, every agent
-procview watch           # read-only auto-refreshing dashboard
-procview last            # jump straight to live-tailing the most recent command
-procview list            # one-shot table, no TUI
-procview clean [days]    # prune capture logs older than N days (default 7)
+agentps                 # interactive TUI (newest session)
+agentps all             # every session, every agent
+agentps watch           # read-only auto-refreshing dashboard
+agentps last            # jump straight to live-tailing the most recent command
+agentps list            # one-shot table, no TUI
+agentps clean [days]    # prune capture logs older than N days (default 7)
 ```
 
 **Keys:** `↑/↓` (or `j/k`) select · `←/→` (or `h/l`) change a process's view mode
@@ -58,7 +59,7 @@ procview clean [days]    # prune capture logs older than N days (default 7)
 One agnostic core, a thin adapter per agent:
 
 ```
-bin/procview              the viewer (agent-agnostic; just reads ~/.runlogs)
+bin/agentps               the viewer (agent-agnostic; just reads ~/.runlogs)
 lib/capture-core.sh       shared: wraps a command as { cmd; } 2>&1 | tee <log>,
                           preserving exit code, recording cmd/desc/cwd/tmux/pid/agent
 adapters/
