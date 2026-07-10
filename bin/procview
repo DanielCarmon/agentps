@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 #
-# procview — see, and live-watch, every process Claude Code runs.
-# Home: https://github.com/danielcarmon/procview
+# procview — see, and live-watch, every shell command your AI coding agent runs.
+# Works with Claude Code, Codex, and OpenCode. Home: https://github.com/DanielCarmon/procview
 #
-# Copyright (C) 2026 Daniel Carmon.
-# Vibecoded by Daniel Carmon and Claude Opus 4.8.
-# This program is free software: you can redistribute it and/or modify it under
-# the terms of the GNU General Public License as published by the Free Software
-# Foundation, either version 3 of the License, or (at your option) any later
-# version. See the LICENSE file, or <https://www.gnu.org/licenses/>.
+# Copyright (C) 2026 Daniel Carmon.  Vibecoded by Daniel Carmon and Claude Opus 4.8.
+# GNU General Public License v3.0 or later — see LICENSE / <https://www.gnu.org/licenses/>.
 #
 # ~/.procview.sh — live viewer for every process Claude Code runs.
 # Companion to the PreToolUse hook (~/.claude/hooks/bash-capture.sh), which tees
@@ -160,16 +156,18 @@ function _pv_refresh2 {
         ep="${EPC[$path]}"; [ -z "$ep" ] && ep="${MT[i]}"
         # scan header by PREFIX (robust to multi-line commands), NO fork; retry pid while running
         if [ -z "${CMDC[$path]+x}" ] || { [ -z "${PIDC[$path]:-}" ] && [ -z "${DONEC[$path]+x}" ]; }; then
-            local ln lc="" lt="" lp="" cnt=0
+            local ln lc="" ld="" lt="" lp="" cnt=0
             while IFS= read -r ln; do
                 (( ++cnt > 30 )) && break
                 case "$ln" in
                     '### cmd : '*)  [ -z "$lc" ] && lc="${ln#'### cmd : '}" ;;
+                    '### desc: '*)  ld="${ln#'### desc: '}" ;;
                     '### tmux: '*)  lt="${ln#'### tmux: '}" ;;
                     '### pid: '*)   lp="${ln#'### pid: '}" ;;
                 esac
             done < "$path" 2>/dev/null
             [ -z "${CMDC[$path]+x}" ] && { lc="${lc//$'\t'/ }"; CMDC["$path"]="${lc:0:200}"; }   # keep full-ish; truncated at draw to fit width
+            [ -z "${DESCC[$path]+x}" ] && DESCC["$path"]="${ld:0:120}"
             [ -z "${TMUXC[$path]+x}" ] && TMUXC["$path"]="${lt:--}"
             [ -n "$lp" ] && PIDC["$path"]="$lp"
         fi
@@ -200,7 +198,8 @@ function _pv_refresh2 {
             _pv_subtree "${PIDC[$path]}"
             ram="$(( SUB_RSS / 1024 ))M"; cpud="${SUB_CPU}%"
         fi
-        CS+=("$start"); CD+=("$CD_i"); CEND+=("$endd"); CBP+=("$bp"); CBC+=("$bc"); CCPU+=("$cpud"); CRAM+=("$ram"); CTMUX+=("${TMUXC[$path]:--}"); CCMD+=("${CMDC[$path]}")
+        local dd="${DESCC[$path]:-}"; [ -z "$dd" ] && dd="-"
+        CS+=("$start"); CD+=("$CD_i"); CEND+=("$endd"); CBP+=("$bp"); CBC+=("$bc"); CCPU+=("$cpud"); CRAM+=("$ram"); CTMUX+=("${TMUXC[$path]:--}"); CDESC+=("$dd"); CCMD+=("${CMDC[$path]}")
     done
     local lbl dir hs="" ha=""
     if [ "$scope" = all ]; then lbl="ALL sessions"; elif ((${#F[@]})); then dir="${F[0]%/*}"; lbl="${dir##*/}"; else lbl="(none)"; fi
@@ -246,8 +245,8 @@ function _pv_setmode {
 # ---------- main interactive viewer ----------
 function procview {
     local scope="${1:-}" cur=0 key seq n _pv_quit=0 selmode focus=list jbuf=""
-    local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=()
-    local -A EPC=() CMDC=() DONEC=() ENDC=() PIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() _PV_MODE=()
+    local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=() CDESC=()
+    local -A EPC=() CMDC=() DESCC=() DONEC=() ENDC=() PIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() _PV_MODE=()
     local SUB_RSS=0 SUB_CPU=0
     local HEADER="" CD_i top=0 TROWS=40 TCOLS=200
     local defmode; defmode="$(cat "$RUNLOG_DIR/.defaultmode" 2>/dev/null)"; case "$defmode" in t|v|c) : ;; *) defmode=t ;; esac
@@ -268,15 +267,16 @@ function procview {
 
         # ---- paint from cache (fork-free) ----
         local out i row line c
-        # size sparse columns (TMUX/CPU/RAM) to their actual content; COMMAND fills the rest
-        local CPUW=3 RAMW=3 TMUXW=4
-        for c in "${CCPU[@]}"; do (( ${#c} > CPUW )) && CPUW=${#c}; done
-        for c in "${CRAM[@]}"; do (( ${#c} > RAMW )) && RAMW=${#c}; done
+        # size sparse columns (TMUX/CPU/RAM/DESC) to their actual content; COMMAND fills the rest
+        local CPUW=3 RAMW=3 TMUXW=4 DESCW=4
+        for c in "${CCPU[@]}";  do (( ${#c} > CPUW ))  && CPUW=${#c};  done
+        for c in "${CRAM[@]}";  do (( ${#c} > RAMW ))  && RAMW=${#c};  done
         for c in "${CTMUX[@]}"; do (( ${#c} > TMUXW )) && TMUXW=${#c}; done; (( TMUXW > 14 )) && TMUXW=14
-        local cmdw=$(( TCOLS - 64 - TMUXW - CPUW - RAMW )); (( cmdw < 12 )) && cmdw=12
+        for c in "${CDESC[@]}"; do (( ${#c} > DESCW )) && DESCW=${#c}; done; (( DESCW > 44 )) && DESCW=44
+        local cmdw=$(( TCOLS - 66 - TMUXW - CPUW - RAMW - DESCW )); (( cmdw < 12 )) && cmdw=12
         out=$'\033[H'
         while IFS= read -r line; do out+="$line"$'\033[K\n'; done <<< "$HEADER"
-        printf -v row '\033[1m  %2s  %-*s  %-8s  %-8s  %6s  %-8s  %-11s  %*s  %*s  %s\033[0m' '#' "$TMUXW" TMUX SESSION START DUR END STATUS "$CPUW" CPU "$RAMW" RAM COMMAND
+        printf -v row '\033[1m  %2s  %-*s  %-8s  %-8s  %6s  %-8s  %-11s  %*s  %*s  %-*s  %s\033[0m' '#' "$TMUXW" TMUX SESSION START DUR END STATUS "$CPUW" CPU "$RAMW" RAM "$DESCW" DESC COMMAND
         out+=$'\033[K\n'"$row"$'\033[K\n'   # blank spacer line MUST clear itself too
         out+="  ${dashes:0:$(( TCOLS>6 ? TCOLS-2 : 120 ))}"$'\033[K\n'
         # viewport: only draw as many rows as fit, scroll window to keep cursor visible
@@ -285,16 +285,17 @@ function procview {
         (( cur >= top + listcap )) && top=$(( cur - listcap + 1 ))
         (( n > listcap && top > n - listcap )) && top=$(( n - listcap ))
         (( top < 0 )) && top=0
-        (( n == 0 )) && out+=$'  (no captured processes yet — run something in Claude Code)\033[K\n'
-        local sess tm vend=$(( top + listcap )); (( vend > n )) && vend=$n
+        (( n == 0 )) && out+=$'  (no captured processes yet — run an agent command)\033[K\n'
+        local sess tm dsc vend=$(( top + listcap )); (( vend > n )) && vend=$n
         for ((i=top; i<vend; i++)); do
             sess="${F[i]%/*}"; sess="${sess##*/}"; sess="${sess:0:8}"
             tm="${CTMUX[i]}"; (( ${#tm} > TMUXW )) && tm="${tm:0:TMUXW}"
+            dsc="${CDESC[i]}"; (( ${#dsc} > DESCW )) && dsc="${dsc:0:DESCW}"
             c="${CCMD[i]}"; (( ${#c} > cmdw )) && c="${c:0:cmdw}"
             if (( i == cur )); then
-                printf -v row '\033[7m  %2d  %-*s  %-8s  %-8s  %6s  %-8s  %-13s  %*s  %*s  %s\033[0m' "$((i+1))" "$TMUXW" "$tm" "$sess" "${CS[i]}" "${CD[i]}" "${CEND[i]}" "${CBP[i]}" "$CPUW" "${CCPU[i]}" "$RAMW" "${CRAM[i]}" "$c"
+                printf -v row '\033[7m  %2d  %-*s  %-8s  %-8s  %6s  %-8s  %-13s  %*s  %*s  %-*s  %s\033[0m' "$((i+1))" "$TMUXW" "$tm" "$sess" "${CS[i]}" "${CD[i]}" "${CEND[i]}" "${CBP[i]}" "$CPUW" "${CCPU[i]}" "$RAMW" "${CRAM[i]}" "$DESCW" "$dsc" "$c"
             else
-                printf -v row '  %2d  %-*s  %-8s  %-8s  %6s  %-8s  %s%-13s\033[0m  %*s  %*s  %s' "$((i+1))" "$TMUXW" "$tm" "$sess" "${CS[i]}" "${CD[i]}" "${CEND[i]}" "${CBC[i]}" "${CBP[i]}" "$CPUW" "${CCPU[i]}" "$RAMW" "${CRAM[i]}" "$c"
+                printf -v row '  %2d  %-*s  %-8s  %-8s  %6s  %-8s  %s%-13s\033[0m  %*s  %*s  %-*s  %s' "$((i+1))" "$TMUXW" "$tm" "$sess" "${CS[i]}" "${CD[i]}" "${CEND[i]}" "${CBC[i]}" "${CBP[i]}" "$CPUW" "${CCPU[i]}" "$RAMW" "${CRAM[i]}" "$DESCW" "$dsc" "$c"
             fi
             out+="$row"$'\033[K\n'
         done
@@ -382,12 +383,12 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         clean)          shift; procclean "${1:-}" ;;
         -h|--help|help)
             printf '%s\n' \
-              "procview — live viewer for every process Claude Code runs" \
+              "procview — live viewer for every shell command your AI coding agent runs" \
               "" \
               "usage:" \
               "  procview [all|<session>]   interactive TUI (default: newest session)" \
               "  procview watch [all]       read-only auto-refreshing dashboard" \
-              "  procview last              live-tail the most recent process" \
+              "  procview last              live-tail the most recent command" \
               "  procview list [all]        one-shot table (no TUI)" \
               "  procview clean [days]      prune capture logs older than N days (default 7)" \
               "" \

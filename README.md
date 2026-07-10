@@ -1,77 +1,80 @@
 # procview
 
-**See — and live-watch — every process Claude Code runs.**
+**See — and live-watch — every shell command your AI coding agent runs.**
 
-By default, when Claude Code runs a shell command you don't see much: output is
-collapsed, long jobs just hang with no live feedback, and once a command scrolls
-away it's gone. `procview` fixes that. A `PreToolUse` hook tees **every** Bash
-command Claude Code runs — automatically, no cooperation from the model — into a
-per-command logfile under `~/.runlogs/`, and a terminal UI lets you browse them,
-follow any one live, and watch real-time **CPU/RAM** per process.
+Works with **Claude Code**, **Codex**, and **OpenCode**. When your agent runs a
+shell command, procview tees it — automatically, no cooperation from the model —
+into a per-command logfile under `~/.runlogs/`, and a terminal UI lets you browse
+them, follow any one live, and watch real-time **CPU/RAM** per process.
 
 ```
- #  TMUX  SESSION   START     DUR   END       STATUS       CPU   RAM  COMMAND
-  1  work  8f3a1c2b  14:22:07  6m01s -         ● running    98%  1.8G  python train.py --epochs 50 ↵ ...
-  2  work  8f3a1c2b  14:21:55     3s 14:21:58  ✔ exit 0       -     -  git status --short
-  3  -     8f3a1c2b  14:19:30    12s 14:19:42  ✗ exit 1       -     -  pytest -q ↵ ...
+ #  TMUX  SESSION   START     DUR   END       STATUS      CPU   RAM  DESC                    COMMAND
+  1  work  8f3a1c2b  14:22:07  6m01s -         ● running   98%  1.8G  Train the model         python train.py --epochs 50 ↵ ...
+  2  work  8f3a1c2b  14:21:55     3s 14:21:58  ✔ exit 0      -     -  Check git status        git status --short
+  3  -     oc-9d2e1  14:19:30    12s 14:19:42  ✗ exit 1      -     -  Run the test suite      pytest -q ↵ ...
 ```
 
-## Why
-
-- **Live output**, even for long jobs — follow any process with a real-time tail.
-- **Nothing gets lost** — every command is on disk (a "black box"), full output
-  preserved even when Claude's own view is truncated.
-- **Resource visibility** — live CPU% and RAM (RSS, whole subtree) per running
-  process. Handy for spotting the job that's about to OOM your box.
-- **Zero cooperation required** — it's a harness hook, so it captures *everything*,
-  not only what the model remembers to log.
+Columns: which **tmux**/**agent session** it ran in, **start / duration / end**,
+**status** (running / exit code), live **CPU & RAM** (whole process subtree), the
+agent's own one-line **description**, and the **command**.
 
 ## Install
 
+**npm** (once the box has Node):
 ```sh
-git clone https://github.com/danielcarmon/procview
-cd procview
-make install        # installs to ~/.local/bin; override with PREFIX=/usr/local
+npm install -g procview
 ```
 
-This installs the `procview` CLI and registers the capture hook in
-`~/.claude/settings.json` (needs `jq`). **Start a new Claude Code session**
-afterwards — hooks load at startup.
+**git** (zero Node dependency — just bash + jq):
+```sh
+git clone https://github.com/DanielCarmon/procview
+cd procview && make install
+```
 
-Requirements: `bash` 4.2+, `jq`, `tmux`/`less`/`vim` for the viewers, `tput`.
+Either way this installs the `procview` CLI and wires up a capture adapter for
+each agent it detects (Claude Code, Codex, OpenCode). **Start a new agent
+session** afterwards — hooks load at startup. Pick specific agents with
+`./install.sh --agent claude,opencode`.
+
+Requirements: `bash` 4.2+, `jq`, `tput`; `tmux`/`less`/`vim` for the viewers.
 
 ## Usage
 
 ```sh
-procview                 # interactive TUI (newest Claude session)
-procview all             # every session
+procview                 # interactive TUI (newest session)
+procview all             # every session, every agent
 procview watch           # read-only auto-refreshing dashboard
-procview last            # jump straight to live-tailing the most recent process
+procview last            # jump straight to live-tailing the most recent command
 procview list            # one-shot table, no TUI
 procview clean [days]    # prune capture logs older than N days (default 7)
 ```
 
 **Keys:** `↑/↓` (or `j/k`) select · `←/→` (or `h/l`) change a process's view mode
-(tail-live / vim / pager) · `Enter` open it · `Tab` focus the "go to #" field ·
+(tail-live / vim / pager) · `Enter` open · `Tab` focus the "go to #" field ·
 `q`/`Esc` quit. Each process remembers the view mode you last used for it.
 
-## How it works
+## Architecture
 
-- **Capture** — `hooks/bash-capture.sh` is a `PreToolUse` hook matched to the
-  `Bash` tool. It rewrites each command to `{ cmd; } 2>&1 | tee -a <log>`,
-  preserving the real exit code, forcing unbuffered output, and recording the
-  command, cwd, tmux session, and pid header. Your permission model is untouched
-  (it does not set `permissionDecision`). Disable per-session with
-  `RUNLOG_HOOK_OFF=1`.
-- **View** — `bin/procview` reads `~/.runlogs/<session>/*.log`, caches per-file
-  metadata, and pulls live CPU/RAM from a single `ps` snapshot per refresh. The
-  TUI is flicker-free (alternate screen + in-place redraw) and fork-free on
-  keypress, so navigation stays instant.
+One agnostic core, a thin adapter per agent:
+
+```
+bin/procview              the viewer (agent-agnostic; just reads ~/.runlogs)
+lib/capture-core.sh       shared: wraps a command as { cmd; } 2>&1 | tee <log>,
+                          preserving exit code, recording cmd/desc/cwd/tmux/pid/agent
+adapters/
+  claude-code/hook.sh     PreToolUse hook  → core → updatedInput            (settings.json)
+  codex/hook.sh           PreToolUse hook  → core → updatedInput            (hooks.json, experimental)
+  opencode/…-capture.ts   tool.execute.before plugin → core                 (auto-loads)
+```
+
+Adding an agent = one adapter that hands its command to the core; the log format
+and viewer are shared. Your permission model is untouched (no `permissionDecision`).
+Disable capture per-session with `RUNLOG_HOOK_OFF=1`.
 
 ## Uninstall
 
 ```sh
-make uninstall     # removes the CLI + hook and deregisters it; keeps ~/.runlogs
+make uninstall     # or: ./install.sh uninstall  — removes CLI, core, all adapters; keeps ~/.runlogs
 ```
 
 ## License

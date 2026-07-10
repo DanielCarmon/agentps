@@ -1,0 +1,48 @@
+{
+  "name": "procview",
+  "version": "0.1.0",
+  "description": "See and live-watch every shell command your AI coding agent (Claude Code, Codex, OpenCode) runs — with live CPU/RAM per process.",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "opencode",
+    "ai-agent",
+    "agent",
+    "hook",
+    "process-monitor",
+    "htop",
+    "tui",
+    "observability"
+  ],
+  "license": "GPL-3.0-or-later",
+  "author": "Daniel Carmon",
+  "homepage": "https://github.com/DanielCarmon/procview#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DanielCarmon/procview.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DanielCarmon/procview/issues"
+  },
+  "bin": {
+    "procview": "bin/procview"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "adapters/",
+    "install.sh",
+    "LICENSE",
+    "README.md"
+  ],
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "scripts": {
+    "postinstall": "bash install.sh --skip-cli || true"
+  }
+}
