@@ -8,6 +8,7 @@
 #
 # Inputs (via environment):
 #   PV_CMD      required — the original shell command to run
+#   PV_DESC     the agent's one-line command description (optional)
 #   PV_AGENT    agent name for the log (claude|codex|opencode|...); default "unknown"
 #   PV_SESSION  session id (becomes the ~/.runlogs/<session>/ dir); default "nosession"
 #   PV_CWD      working directory to record; default $PWD

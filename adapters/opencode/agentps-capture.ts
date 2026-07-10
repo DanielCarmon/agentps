@@ -14,7 +14,7 @@ import { join } from "node:path"
 
 const CORE = process.env.AGENTPS_CORE || join(homedir(), ".local", "share", "agentps", "capture-core.sh")
 
-export const ProcviewCapture = async ({ directory }) => {
+export const AgentpsCapture = async ({ directory }) => {
   return {
     "tool.execute.before": async (input, output) => {
       if (input.tool !== "bash") return
