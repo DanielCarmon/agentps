@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+#
+# procview — see, and live-watch, every process Claude Code runs.
+# Home: https://github.com/danielcarmon/procview
+#
+# Copyright (C) 2026 Daniel Carmon.
+# Vibecoded by Daniel Carmon and Claude Opus 4.8.
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version. See the LICENSE file, or <https://www.gnu.org/licenses/>.
+#
+# ~/.procview.sh — live viewer for every process Claude Code runs.
+# Companion to the PreToolUse hook (~/.claude/hooks/bash-capture.sh), which tees
+# every Bash command Claude runs into ~/.runlogs/<session>/<ts>_<ns>_<cmd>.log.
+#
+#   procview   -> full-screen live viewer.
+#                   ↑/↓ (or j/k)  select a process
+#                   ←/→ (or h/l)  change this task's view mode (tail/vim/pager)
+#                   Enter         open the selected process in its mode
+#                   Tab           focus the "go to #" field (type digits / ↑↓ adjust,
+#                                  Enter to jump the selection, Esc/Tab to leave)
+#                   a=all sessions  n=newest-only  q/Esc=quit
+#                 Each task remembers its last mode; last-chosen becomes the default
+#                 for new tasks (persisted in ~/.runlogs/.viewmodes/.defaultmode).
+#   procwatch  -> read-only auto-refreshing dashboard (no interaction)
+#   proclast   -> immediately live-tail the single most-recent process
+#   procs      -> one-shot table print (no loop)
+#   procclean [days] -> prune old capture logs (default 7)
+
+export RUNLOG_DIR="${RUNLOG_DIR:-$HOME/.runlogs}"
+
+# ---------- shared data helpers ----------
+
+function _pv_logs {
+    local scope="${1:-}"
+    if [ "$scope" = "all" ]; then
+        find "$RUNLOG_DIR" -maxdepth 2 -type f -name '*.log' 2>/dev/null
+    elif [ -n "$scope" ] && [ -d "$RUNLOG_DIR/$scope" ]; then
+        find "$RUNLOG_DIR/$scope" -maxdepth 1 -type f -name '*.log' 2>/dev/null
+    else
+        local newest sdir
+        newest="$(find "$RUNLOG_DIR" -maxdepth 2 -type f -name '*.log' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+        [ -z "$newest" ] && return 0
+        sdir="$(dirname "$newest")"
+        find "$sdir" -maxdepth 1 -type f -name '*.log' 2>/dev/null
+    fi
+}
+
+# one find call -> "basename \t mtime \t size \t path", scope-aware
+function _pv_find_lines {
+    local scope="${1:-}"
+    if [ "$scope" = "all" ]; then
+        find "$RUNLOG_DIR" -maxdepth 2 -type f -name '*.log' -printf '%f\t%T@\t%s\t%p\n' 2>/dev/null
+    elif [ -n "$scope" ] && [ -d "$RUNLOG_DIR/$scope" ]; then
+        find "$RUNLOG_DIR/$scope" -maxdepth 1 -type f -name '*.log' -printf '%f\t%T@\t%s\t%p\n' 2>/dev/null
+    else
+        local newest sdir
+        newest="$(find "$RUNLOG_DIR" -maxdepth 2 -type f -name '*.log' -printf '%T@\t%p\n' 2>/dev/null | sort -rn | head -1 | cut -f2-)"
+        [ -z "$newest" ] && return 0
+        sdir="${newest%/*}"
+        find "$sdir" -maxdepth 1 -type f -name '*.log' -printf '%f\t%T@\t%s\t%p\n' 2>/dev/null
+    fi
+}
+
+function _pv_start_epoch {
+    local b stamp rest hms
+    b="$(basename "$1")"
+    stamp="${b%%_*}"; rest="${b#*_}"; hms="${rest%%_*}"
+    if [[ "$stamp" =~ ^[0-9]{8}$ && "$hms" =~ ^[0-9]{6}$ ]]; then
+        date -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${hms:0:2}:${hms:2:2}:${hms:4:2}" +%s 2>/dev/null && return
+    fi
+    stat -c %Y "$1" 2>/dev/null
+}
+
+function _pv_status {
+    local code
+    code="$(grep -m1 '^### \[exit' "$1" 2>/dev/null | sed -E 's/.*\[exit ([0-9]+)\].*/\1/')"
+    [ -n "$code" ] && echo "DONE|$code" || echo "RUN|-"
+}
+
+function _pv_fmt_dur {
+    local s="$1"
+    if   [ "$s" -lt 60 ];   then printf '%ds' "$s"
+    elif [ "$s" -lt 3600 ]; then printf '%dm%02ds' "$((s/60))" "$((s%60))"
+    else printf '%dh%02dm' "$((s/3600))" "$(((s%3600)/60))"; fi
+}
+
+# ---------- one-shot table (procs / procwatch) — simple, not perf-critical ----------
+function _pv_collect { local scope="$1" f; _PV_FILES=(); while IFS= read -r f; do [ -z "$f" ] && continue; _PV_FILES+=("$f"); done < <(_pv_logs "$scope" | while IFS= read -r f; do printf '%s\t%s\n' "$(_pv_start_epoch "$f")" "$f"; done | sort -rn | cut -f2-); }
+function _pv_fields {
+    local f="$1" now st code se me start dur endref bplain bcolor sz cmd
+    now="$(date +%s)"; se="$(_pv_start_epoch "$f")"; me="$(stat -c %Y "$f" 2>/dev/null || echo "$now")"
+    IFS='|' read -r st code < <(_pv_status "$f")
+    start="$(date -d "@$se" '+%H:%M:%S' 2>/dev/null)"
+    [ "$st" = "RUN" ] && endref="$now" || endref="$me"
+    dur="$(_pv_fmt_dur "$(( endref - se ))")"
+    if [ "$st" = "RUN" ]; then
+        if [ "$(( now - me ))" -gt 15 ]; then bplain="● stalled"; bcolor=$'\033[33m'; else bplain="● running"; bcolor=$'\033[1;32m'; fi
+    elif [ "$code" = "0" ]; then bplain="✔ exit 0"; bcolor=$'\033[32m'
+    else bplain="✗ exit $code"; bcolor=$'\033[1;31m'; fi
+    sz="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+    if   [ "$sz" -ge 1048576 ]; then sz="$((sz/1048576))M"; elif [ "$sz" -ge 1024 ]; then sz="$((sz/1024))K"; else sz="${sz}B"; fi
+    cmd="$(grep -m1 '^### cmd :' "$f" 2>/dev/null | sed 's/^### cmd : //' | tr '\n\t' '  ')"; cmd="${cmd:0:58}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s' "$start" "$dur" "$bplain" "$bcolor" "$sz" "$cmd"
+}
+function _pv_table {
+    local scope="${1:-}" f i=0 start dur bplain bcolor sz cmd now="$(date +%s)" minstart="" maxact=0 running=0 st code se me
+    _pv_collect "$scope"
+    for f in "${_PV_FILES[@]}"; do se="$(_pv_start_epoch "$f")"; me="$(stat -c %Y "$f" 2>/dev/null||echo "$now")"; [ -z "$minstart" ]&&minstart="$se"; [ "$se" -lt "$minstart" ] 2>/dev/null&&minstart="$se"; [ "$me" -gt "$maxact" ] 2>/dev/null&&maxact="$me"; IFS='|' read -r st code < <(_pv_status "$f"); [ "$st" = RUN ]&&running=$((running+1)); done
+    local lbl; if [ "$scope" = all ]; then lbl="ALL sessions"; elif ((${#_PV_FILES[@]})); then lbl="$(basename "$(dirname "${_PV_FILES[0]}")")"; else lbl="(none)"; fi
+    printf '\033[1;36m▶ procview\033[0m  \033[1m%s\033[0m\n\033[2m  dir: %s\033[0m\n' "$lbl" "$RUNLOG_DIR"
+    ((${#_PV_FILES[@]})) && printf '\033[2m  started: %s    last activity: %s\033[0m\n' "$(date -d "@$minstart" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" "$(date -d "@$maxact" '+%H:%M:%S' 2>/dev/null)"
+    printf '  processes: \033[1m%d\033[0m   running: \033[1;32m%d\033[0m\n' "${#_PV_FILES[@]}" "$running"
+    printf '\n\033[1m  #  START     DUR      STATUS         SIZE  COMMAND\033[0m\n  ──────────────────────────────────────────────────────────────────\n'
+    ((${#_PV_FILES[@]}==0)) && { printf '  (no captured processes yet)\n'; return; }
+    for f in "${_PV_FILES[@]}"; do i=$((i+1)); IFS=$'\t' read -r start dur bplain bcolor sz cmd < <(_pv_fields "$f"); printf '  %2d  %-8s  %7s  %s%-13s\033[0m  %5s  %s\n' "$i" "$start" "$dur" "$bcolor" "$bplain" "$sz" "$cmd"; done
+}
+
+# ---------- followers ----------
+function _pv_tail {
+    local f="$1" key tpid
+    printf '\033[2J\033[H\033[1;32m● live tail\033[0m  %s\n\033[2m  (Esc or q = back)\033[0m\n\n' "$f"
+    tail -n 300 -F "$f" & tpid=$!
+    while IFS= read -rsn1 key; do if [ "$key" = $'\e' ] || [ "$key" = q ] || [ "$key" = Q ]; then break; fi; done
+    kill "$tpid" 2>/dev/null; wait "$tpid" 2>/dev/null; return 0
+}
+function _pv_mode_cycle { local order=(t v c) i; case "$1" in v) i=1;; c) i=2;; *) i=0;; esac; [ "$2" = 1 ] && i=$(((i+1)%3)) || i=$(((i+2)%3)); echo "${order[i]}"; }
+function _pv_run {
+    case "$2" in
+        v) printf '\033[?25h'; vim "$1"; stty -echo -icanon min 1 time 0 2>/dev/null; printf '\033[?25l' ;;
+        c) printf '\033[?25h'; less "$1"; stty -echo -icanon min 1 time 0 2>/dev/null; printf '\033[?25l' ;;
+        *) _pv_tail "$1" ;;
+    esac
+}
+
+# ---------- fast cached refresh for the interactive viewer (dynamic-scope into procview) ----------
+# steady state: 1 find + 1 sort + 1 tail-per-running-file. epoch/command cached forever per file.
+function _pv_refresh2 {
+    local base mt sz path cl code now ep endref ds bp bc szh i minstart="" maxact=0 running=0 start
+    F=(); MT=(); SZ=()
+    while IFS=$'\t' read -r base mt sz path; do
+        [ -z "$path" ] && continue
+        F+=("$path"); MT+=("${mt%.*}"); SZ+=("$sz")
+    done < <(_pv_find_lines "$scope" | sort -r)
+    # one ps snapshot -> pid/ppid/rss/cpu maps for live per-process resource stats
+    PS_RSS=(); PS_CPU=(); PS_CH=()
+    if ((${#F[@]})); then
+        local _pid _ppid _rss _cpu
+        while read -r _pid _ppid _rss _cpu; do
+            [ -z "$_pid" ] && continue
+            PS_RSS["$_pid"]="$_rss"; PS_CPU["$_pid"]="$_cpu"; PS_CH["$_ppid"]+="$_pid "
+        done < <(ps -eo pid=,ppid=,rss=,pcpu= 2>/dev/null)
+    fi
+    printf -v now '%(%s)T' -1
+    CS=(); CD=(); CBP=(); CBC=(); CSZ=(); CCMD=()
+    for ((i=0; i<${#F[@]}; i++)); do
+        path="${F[i]}"
+        [ -z "${EPC[$path]+x}" ] && EPC["$path"]="$(_pv_start_epoch "$path")"      # date fork ONCE per file
+        ep="${EPC[$path]}"; [ -z "$ep" ] && ep="${MT[i]}"
+        # scan header by PREFIX (robust to multi-line commands), NO fork; retry pid while running
+        if [ -z "${CMDC[$path]+x}" ] || { [ -z "${PIDC[$path]:-}" ] && [ -z "${DONEC[$path]+x}" ]; }; then
+            local ln lc="" lt="" lp="" cnt=0
+            while IFS= read -r ln; do
+                (( ++cnt > 30 )) && break
+                case "$ln" in
+                    '### cmd : '*)  [ -z "$lc" ] && lc="${ln#'### cmd : '}" ;;
+                    '### tmux: '*)  lt="${ln#'### tmux: '}" ;;
+                    '### pid: '*)   lp="${ln#'### pid: '}" ;;
+                esac
+            done < "$path" 2>/dev/null
+            [ -z "${CMDC[$path]+x}" ] && { lc="${lc//$'\t'/ }"; CMDC["$path"]="${lc:0:200}"; }   # keep full-ish; truncated at draw to fit width
+            [ -z "${TMUXC[$path]+x}" ] && TMUXC["$path"]="${lt:--}"
+            [ -n "$lp" ] && PIDC["$path"]="$lp"
+        fi
+        if [ -z "${DONEC[$path]+x}" ]; then                                        # tail while undone (grabs exit + end time)
+            local t2 lastln; t2="$(tail -n2 "$path" 2>/dev/null)"; lastln="${t2##*$'\n'}"
+            case "$lastln" in *'### [exit '*)
+                code="${lastln#*'### [exit '}"; DONEC["$path"]="${code%%]*}"; ENDC["$path"]="${lastln##* }" ;;
+            esac
+        fi
+        [ -z "$minstart" ] && minstart="$ep"; (( ep < minstart )) && minstart="$ep"
+        (( MT[i] > maxact )) && maxact="${MT[i]}"
+        if [ -n "${DONEC[$path]+x}" ]; then
+            endref="${MT[i]}"; code="${DONEC[$path]}"
+            if [ "$code" = 0 ]; then bp="✔ exit 0"; bc=$'\033[32m'; else bp="✗ exit $code"; bc=$'\033[1;31m'; fi
+        else
+            endref="$now"; running=$((running+1))
+            if (( now - MT[i] > 15 )); then bp="● stalled"; bc=$'\033[33m'; else bp="● running"; bc=$'\033[1;32m'; fi
+        fi
+        printf -v start '%(%H:%M:%S)T' "$ep"
+        ds=$(( endref - ep ))
+        if   (( ds < 60 ));   then printf -v CD_i '%ds' "$ds"
+        elif (( ds < 3600 )); then printf -v CD_i '%dm%02ds' "$((ds/60))" "$((ds%60))"
+        else printf -v CD_i '%dh%02dm' "$((ds/3600))" "$(((ds%3600)/60))"; fi
+        sz="${SZ[i]}"
+        if   (( sz >= 1048576 )); then szh="$((sz/1048576))M"; elif (( sz >= 1024 )); then szh="$((sz/1024))K"; else szh="${sz}B"; fi
+        local endd="${ENDC[$path]:--}" ram="-" cpud="-"   # ASCII '-' placeholder keeps columns aligned
+        if [ -z "${DONEC[$path]+x}" ] && [ -n "${PIDC[$path]:-}" ] && [ -n "${PS_RSS[${PIDC[$path]}]+x}" ]; then
+            _pv_subtree "${PIDC[$path]}"
+            ram="$(( SUB_RSS / 1024 ))M"; cpud="${SUB_CPU}%"
+        fi
+        CS+=("$start"); CD+=("$CD_i"); CEND+=("$endd"); CBP+=("$bp"); CBC+=("$bc"); CCPU+=("$cpud"); CRAM+=("$ram"); CTMUX+=("${TMUXC[$path]:--}"); CCMD+=("${CMDC[$path]}")
+    done
+    local lbl dir hs="" ha=""
+    if [ "$scope" = all ]; then lbl="ALL sessions"; elif ((${#F[@]})); then dir="${F[0]%/*}"; lbl="${dir##*/}"; else lbl="(none)"; fi
+    if ((${#F[@]})); then printf -v hs '%(%Y-%m-%d %H:%M:%S)T' "$minstart"; printf -v ha '%(%H:%M:%S)T' "$maxact"; fi
+    printf -v HEADER '\033[1;36m▶ procview\033[0m  \033[1m%s\033[0m\n\033[2m  dir: %s\033[0m\n\033[2m  started: %s    last activity: %s\033[0m\n  processes: \033[1m%d\033[0m   running: \033[1;32m%d\033[0m' "$lbl" "$RUNLOG_DIR" "$hs" "$ha" "${#F[@]}" "$running"
+}
+
+# read terminal size into TROWS/TCOLS (procview locals, via dynamic scope)
+function _pv_size {
+    TROWS="$(tput lines 2>/dev/null || echo 40)"; TCOLS="$(tput cols 2>/dev/null || echo 200)"
+    [[ "$TROWS" =~ ^[0-9]+$ ]] || TROWS=40; [[ "$TCOLS" =~ ^[0-9]+$ ]] || TCOLS=200
+}
+
+# sum RSS(kb) + CPU(%) over the process subtree rooted at $1; sets SUB_RSS / SUB_CPU
+function _pv_subtree {
+    SUB_RSS=0; SUB_CPU=0
+    local stack=("$1") p k c
+    while ((${#stack[@]})); do
+        p="${stack[-1]}"; unset 'stack[-1]'
+        SUB_RSS=$(( SUB_RSS + ${PS_RSS[$p]:-0} ))
+        c="${PS_CPU[$p]:-0}"; SUB_CPU=$(( SUB_CPU + ${c%%.*} ))
+        for k in ${PS_CH[$p]:-}; do stack+=("$k"); done
+    done
+}
+
+# clamp the jump buffer to [1,n] and move the selection there
+function _pv_clampjump {
+    [ -z "$jbuf" ] && return
+    jbuf="$((10#$jbuf))"
+    (( jbuf < 1 )) && jbuf=1
+    (( n > 0 && jbuf > n )) && jbuf=n
+    (( n > 0 )) && cur=$((jbuf-1))
+}
+
+# change selected task's mode ($1=1 fwd / 0 back); persist last-choice as default
+function _pv_setmode {
+    (( n == 0 )) && return
+    local newm; newm="$(_pv_mode_cycle "${_PV_MODE[${F[cur]}]:-$defmode}" "$1")"
+    _PV_MODE["${F[cur]}"]="$newm"
+    printf '%s\n' "$newm" > "$RUNLOG_DIR/.defaultmode" 2>/dev/null
+}
+
+# ---------- main interactive viewer ----------
+function procview {
+    local scope="${1:-}" cur=0 key seq n _pv_quit=0 selmode focus=list jbuf=""
+    local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=()
+    local -A EPC=() CMDC=() DONEC=() ENDC=() PIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() _PV_MODE=()
+    local SUB_RSS=0 SUB_CPU=0
+    local HEADER="" CD_i top=0 TROWS=40 TCOLS=200
+    local defmode; defmode="$(cat "$RUNLOG_DIR/.defaultmode" 2>/dev/null)"; case "$defmode" in t|v|c) : ;; *) defmode=t ;; esac
+    if [ -f "$RUNLOG_DIR/.viewmodes" ]; then local _p _m; while IFS=$'\t' read -r _p _m; do [ -n "$_p" ] && _PV_MODE["$_p"]="$_m"; done < "$RUNLOG_DIR/.viewmodes"; fi
+    local dashes; printf -v dashes '%200s' ''; dashes="${dashes// /-}"   # reusable separator buffer
+    local saved; saved="$(stty -g 2>/dev/null)"
+    stty -echo -icanon min 1 time 0 2>/dev/null
+    printf '\033[?1049h\033[?25l'
+    _pv_size; trap '_pv_quit=1' INT; trap '_pv_size' WINCH
+    _pv_refresh2
+
+    while true; do
+        [ "$_pv_quit" = 1 ] && break
+        printf '\033[?25l'
+        n=${#F[@]}
+        (( cur < 0 )) && cur=0
+        (( n > 0 && cur >= n )) && cur=$((n-1))
+
+        # ---- paint from cache (fork-free) ----
+        local out i row line c
+        # size sparse columns (TMUX/CPU/RAM) to their actual content; COMMAND fills the rest
+        local CPUW=3 RAMW=3 TMUXW=4
+        for c in "${CCPU[@]}"; do (( ${#c} > CPUW )) && CPUW=${#c}; done
+        for c in "${CRAM[@]}"; do (( ${#c} > RAMW )) && RAMW=${#c}; done
+        for c in "${CTMUX[@]}"; do (( ${#c} > TMUXW )) && TMUXW=${#c}; done; (( TMUXW > 14 )) && TMUXW=14
+        local cmdw=$(( TCOLS - 64 - TMUXW - CPUW - RAMW )); (( cmdw < 12 )) && cmdw=12
+        out=$'\033[H'
+        while IFS= read -r line; do out+="$line"$'\033[K\n'; done <<< "$HEADER"
+        printf -v row '\033[1m  %2s  %-*s  %-8s  %-8s  %6s  %-8s  %-11s  %*s  %*s  %s\033[0m' '#' "$TMUXW" TMUX SESSION START DUR END STATUS "$CPUW" CPU "$RAMW" RAM COMMAND
+        out+=$'\033[K\n'"$row"$'\033[K\n'   # blank spacer line MUST clear itself too
+        out+="  ${dashes:0:$(( TCOLS>6 ? TCOLS-2 : 120 ))}"$'\033[K\n'
+        # viewport: only draw as many rows as fit, scroll window to keep cursor visible
+        local listcap=$(( TROWS - 11 )); (( listcap < 3 )) && listcap=3
+        (( cur < top )) && top=$cur
+        (( cur >= top + listcap )) && top=$(( cur - listcap + 1 ))
+        (( n > listcap && top > n - listcap )) && top=$(( n - listcap ))
+        (( top < 0 )) && top=0
+        (( n == 0 )) && out+=$'  (no captured processes yet — run something in Claude Code)\033[K\n'
+        local sess tm vend=$(( top + listcap )); (( vend > n )) && vend=$n
+        for ((i=top; i<vend; i++)); do
+            sess="${F[i]%/*}"; sess="${sess##*/}"; sess="${sess:0:8}"
+            tm="${CTMUX[i]}"; (( ${#tm} > TMUXW )) && tm="${tm:0:TMUXW}"
+            c="${CCMD[i]}"; (( ${#c} > cmdw )) && c="${c:0:cmdw}"
+            if (( i == cur )); then
+                printf -v row '\033[7m  %2d  %-*s  %-8s  %-8s  %6s  %-8s  %-13s  %*s  %*s  %s\033[0m' "$((i+1))" "$TMUXW" "$tm" "$sess" "${CS[i]}" "${CD[i]}" "${CEND[i]}" "${CBP[i]}" "$CPUW" "${CCPU[i]}" "$RAMW" "${CRAM[i]}" "$c"
+            else
+                printf -v row '  %2d  %-*s  %-8s  %-8s  %6s  %-8s  %s%-13s\033[0m  %*s  %*s  %s' "$((i+1))" "$TMUXW" "$tm" "$sess" "${CS[i]}" "${CD[i]}" "${CEND[i]}" "${CBC[i]}" "${CBP[i]}" "$CPUW" "${CCPU[i]}" "$RAMW" "${CRAM[i]}" "$c"
+            fi
+            out+="$row"$'\033[K\n'
+        done
+        # scroll indicator / spacer (fixed height)
+        if (( n > listcap )); then printf -v row '  \033[2m▲▼ %d–%d of %d\033[0m' "$((top+1))" "$vend" "$n"; else row=''; fi
+        out+="$row"$'\033[K\n'
+        # mode selector footer
+        if (( n > 0 )); then selmode="${_PV_MODE[${F[cur]}]:-$defmode}"; else selmode="$defmode"; fi
+        out+='  view:  '; local pair m lbl2
+        for pair in t:tail-live v:vim c:pager; do
+            m="${pair%%:*}"; lbl2="${pair#*:}"
+            if [ "$m" = "$selmode" ]; then out+=$'\033[7m '"$lbl2"$' \033[0m  '; else out+=$'\033[2m '"$lbl2"$' \033[0m  '; fi
+        done
+        out+=$'\033[K\n'
+        # jump field
+        if [ "$focus" = jump ]; then
+            printf -v row '  \033[7m go to #: %s_ \033[0m   \033[2m(digits \302\267 \342\206\221\342\206\223 adjust \302\267 Enter jump \302\267 Esc/Tab leave)\033[0m' "$jbuf"
+        else
+            printf -v row '  \033[2mgo to #: [Tab]      \342\206\221\342\206\223 select \302\267 \342\206\220\342\206\222 mode \302\267 Enter open \302\267 q quit\033[0m'
+        fi
+        out+="$row"$'\033[K\033[J'
+        printf '%s' "$out"
+
+        # ---- input; refresh ONLY on idle timeout (never blocks a keypress) ----
+        IFS= read -rsn1 -t 1 key || { _pv_refresh2; continue; }
+        [ "$_pv_quit" = 1 ] && break
+
+        if [ "$focus" = jump ]; then
+            case "$key" in
+                '' ) focus=list ;;                                   # Enter = confirm jump
+                $'\t') focus=list ;;                                 # Tab = leave field
+                $'\033') if IFS= read -rsn2 -t 0.05 seq; then case "$seq" in
+                             '[A'|'[C') jbuf=$(( ${jbuf:-$((cur+1))} + 1 )); _pv_clampjump ;;
+                             '[B'|'[D') jbuf=$(( ${jbuf:-$((cur+1))} - 1 )); _pv_clampjump ;;
+                         esac; else focus=list; fi ;;                # bare Esc = leave field
+                $'\177'|$'\b') jbuf="${jbuf%?}"; _pv_clampjump ;;
+                [0-9]) jbuf="${jbuf}${key}"; _pv_clampjump ;;
+            esac
+            continue
+        fi
+
+        # focus == list
+        if [ -z "$key" ]; then                                       # Enter opens
+            (( n > 0 )) && { _pv_run "${F[cur]}" "${_PV_MODE[${F[cur]}]:-$defmode}"; printf '\033[2J\033[H'; _pv_refresh2; }
+            continue
+        fi
+        case "$key" in
+            $'\t') focus=jump; jbuf="" ;;
+            $'\033') if IFS= read -rsn2 -t 0.05 seq; then case "$seq" in
+                         '[A') (( cur > 0 ))   && cur=$((cur-1)) ;;
+                         '[B') (( cur < n-1 )) && cur=$((cur+1)) ;;
+                         '[C') _pv_setmode 1 ;;
+                         '[D') _pv_setmode 0 ;;
+                     esac; else break; fi ;;                          # bare Esc quits
+            k|K) (( cur > 0 ))   && cur=$((cur-1)) ;;
+            j|J) (( cur < n-1 )) && cur=$((cur+1)) ;;
+            l|L) _pv_setmode 1 ;;
+            h|H) _pv_setmode 0 ;;
+            q|Q) break ;;
+            a|A) scope="all"; cur=0; top=0; _pv_refresh2 ;;
+            N|n) scope="";    cur=0; top=0; _pv_refresh2 ;;
+            [0-9]) focus=jump; jbuf="$key"; _pv_clampjump ;;          # digit -> jump field (does NOT open)
+        esac
+    done
+
+    { local _p; for _p in "${!_PV_MODE[@]}"; do printf '%s\t%s\n' "$_p" "${_PV_MODE[$_p]}"; done; } > "$RUNLOG_DIR/.viewmodes" 2>/dev/null
+    trap - INT
+    stty "$saved" 2>/dev/null
+    printf '\033[?25h\033[?1049l'
+    return 0
+}
+
+# ---------- non-interactive helpers ----------
+function procwatch { local scope="${1:-}"; watch -t -c -n 1 "bash -c 'source ~/.procview.sh; _pv_table \"$scope\"'"; }
+function procs { _pv_table "${1:-}"; }
+function proclast { local f; f="$(_pv_logs all | while IFS= read -r x; do printf '%s\t%s\n' "$(stat -c %Y "$x" 2>/dev/null)" "$x"; done | sort -rn | head -1 | cut -f2-)"; [ -z "$f" ] && { echo "no captured processes yet"; return 1; }; _pv_tail "$f"; }
+function procclean { local days="${1:-7}"; find "$RUNLOG_DIR" -type f -name '*.log' -mtime +"$days" -delete 2>/dev/null; find "$RUNLOG_DIR" -mindepth 1 -type d -empty -delete 2>/dev/null; echo "pruned capture logs older than ${days}d"; }
+
+# ---------- CLI entrypoint (runs only when executed directly, not when sourced) ----------
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    case "${1:-}" in
+        watch)          shift; procwatch "${1:-}" ;;
+        last)           proclast ;;
+        list|ls)        shift; procs "${1:-}" ;;
+        clean)          shift; procclean "${1:-}" ;;
+        -h|--help|help)
+            printf '%s\n' \
+              "procview — live viewer for every process Claude Code runs" \
+              "" \
+              "usage:" \
+              "  procview [all|<session>]   interactive TUI (default: newest session)" \
+              "  procview watch [all]       read-only auto-refreshing dashboard" \
+              "  procview last              live-tail the most recent process" \
+              "  procview list [all]        one-shot table (no TUI)" \
+              "  procview clean [days]      prune capture logs older than N days (default 7)" \
+              "" \
+              "keys:  up/down select . left/right view-mode . Enter open . Tab go-to-# . q quit" ;;
+        *)              procview "${1:-}" ;;
+    esac
+fi

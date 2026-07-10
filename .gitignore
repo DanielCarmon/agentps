@@ -1,0 +1,4 @@
+# runtime capture logs live in ~/.runlogs, never in the repo
+*.log
+*.swp
+.DS_Store
