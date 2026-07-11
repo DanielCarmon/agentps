@@ -257,7 +257,7 @@ function _aps_setmode {
 
 # ---------- main interactive viewer ----------
 function agentps {
-    local scope="${1:-}" cur=0 key seq n _aps_quit=0 selmode focus=list jbuf=""
+    local scope="${1:-all}" cur=0 key seq n _aps_quit=0 selmode focus=list jbuf=""
     local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=() CDESC=()
     local -A EPC=() CMDC=() DESCC=() DONEC=() ENDC=() PIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() _APS_MODE=()
     local SUB_RSS=0 SUB_CPU=0
@@ -392,22 +392,22 @@ function procclean { local days="${1:-7}"; find "$RUNLOG_DIR" -type f -name '*.l
 # ---------- CLI entrypoint (runs only when executed directly, not when sourced) ----------
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     case "${1:-}" in
-        watch)          shift; procwatch "${1:-}" ;;
+        watch)          shift; procwatch "${1:-all}" ;;
         last)           proclast ;;
-        list|ls)        shift; procs "${1:-}" ;;
+        list|ls)        shift; procs "${1:-all}" ;;
         clean)          shift; procclean "${1:-}" ;;
         -h|--help|help)
             printf '%s\n' \
               "agentps — view the processes your AI coding agent runs (Claude Code, Codex, OpenCode)" \
               "" \
               "usage:" \
-              "  agentps [all|<session>]   interactive TUI (default: newest session)" \
+              "  agentps [all|<session>]   interactive TUI (default: ALL sessions/agents)" \
               "  agentps watch [all]       read-only auto-refreshing dashboard" \
               "  agentps last              live-tail the most recent command" \
               "  agentps list [all]        one-shot table (no TUI)" \
               "  agentps clean [days]      prune capture logs older than N days (default 7)" \
               "" \
-              "keys:  up/down select . left/right view-mode (tail/vim/pager/cmd) . Enter open . q quit" ;;
+              "keys:  up/down select . left/right view-mode (tail/vim/pager/cmd) . n=this-session-only . Enter open . q quit" ;;
         *)              agentps "${1:-}" ;;
     esac
 fi
