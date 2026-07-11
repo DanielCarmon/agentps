@@ -52,9 +52,13 @@ ln -sf "$log" "$RUNLOG_DIR/latest.log" 2>/dev/null
 qlog="$(printf '%q' "$log")"; nl=$'\n'
 # braces (not subshell) preserve cwd; PIPESTATUS preserves the real exit code;
 # pid line enables live RAM/CPU; __RUNLOG_TEE__ is the double-wrap guard.
+# After the command, record any background jobs it left (jobs -p) as ### bgpid:
+# lines — so detached long jobs (setsid/nohup/&) stay visible as "running".
 wrapped="export PYTHONUNBUFFERED=1${nl}"
 wrapped+="printf '### pid: %s\\n' \$\$ >> ${qlog}${nl}"
-wrapped+="{${nl}${cmd}${nl}} 2>&1 | tee -a ${qlog}  # __RUNLOG_TEE__${nl}"
+wrapped+="{${nl}${cmd}${nl}"
+wrapped+="__aps_rc=\$?; jobs -p 2>/dev/null | sed 's/^/### bgpid: /' >> ${qlog}; (exit \$__aps_rc)${nl}"
+wrapped+="} 2>&1 | tee -a ${qlog}  # __RUNLOG_TEE__${nl}"
 wrapped+="__rc=\${PIPESTATUS[0]}${nl}"
 wrapped+="printf '\\n### [exit %s] %s\\n' \"\$__rc\" \"\$(date +%H:%M:%S)\" >> ${qlog}${nl}"
 wrapped+="exit \$__rc"

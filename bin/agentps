@@ -65,12 +65,15 @@ function _aps_start_epoch {
 }
 
 function _aps_status {
-    local code pid
-    code="$(grep -m1 '^### \[exit' "$1" 2>/dev/null | sed -E 's/.*\[exit ([0-9]+)\].*/\1/')"
-    [ -n "$code" ] && { echo "DONE|$code"; return; }
-    # no exit footer: truly running only if the recorded pid is still alive; else it was killed
+    local code pid bp
+    # alive if the wrapper pid OR any detached bg-job pid is still running (bg pids sit near the end)
     pid="$(grep -m1 '^### pid: ' "$1" 2>/dev/null | sed 's/^### pid: //')"
-    { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } && echo "RUN|-" || echo "STALL|-"
+    { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } && { echo "RUN|-"; return; }
+    for bp in $(tail -n 8 "$1" 2>/dev/null | sed -n 's/^### bgpid: //p'); do
+        kill -0 "$bp" 2>/dev/null && { echo "RUN|-"; return; }
+    done
+    code="$(grep -m1 '^### \[exit' "$1" 2>/dev/null | sed -E 's/.*\[exit ([0-9]+)\].*/\1/')"
+    [ -n "$code" ] && echo "DONE|$code" || echo "STALL|-"
 }
 
 function _aps_fmt_dur {
@@ -177,27 +180,34 @@ function _aps_refresh2 {
             [ -z "${TMUXC[$path]+x}" ] && TMUXC["$path"]="${lt:--}"
             [ -n "$lp" ] && PIDC["$path"]="$lp"
         fi
-        if [ -z "${DONEC[$path]+x}" ]; then                                        # tail while undone (grabs exit + end time)
-            local t2 lastln; t2="$(tail -n2 "$path" 2>/dev/null)"; lastln="${t2##*$'\n'}"
-            case "$lastln" in *'### [exit '*)
-                code="${lastln#*'### [exit '}"; DONEC["$path"]="${code%%]*}"; ENDC["$path"]="${lastln##* }" ;;
+        if [ -z "${DONEC[$path]+x}" ]; then                                        # tail: grab exit footer + detached bg pids
+            local t8 foot bgl bgs=""
+            t8="$(tail -n 8 "$path" 2>/dev/null)"
+            case "$t8" in *'### [exit '*)
+                foot="${t8##*'### [exit '}"; foot="${foot%%$'\n'*}"                 # "N] HH:MM:SS"
+                DONEC["$path"]="${foot%%]*}"; ENDC["$path"]="${foot##* }"
+                while IFS= read -r bgl; do case "$bgl" in '### bgpid: '*) bgs+="${bgl#'### bgpid: '} ";; esac; done <<< "$t8"
+                BGPIDC["$path"]="$bgs" ;;
             esac
         fi
         [ -z "$minstart" ] && minstart="$ep"; (( ep < minstart )) && minstart="$ep"
         (( MT[i] > maxact )) && maxact="${MT[i]}"
-        if [ -n "${DONEC[$path]+x}" ]; then
-            endref="${MT[i]}"; code="${DONEC[$path]}"
+        # live root pid: an alive detached (bg) job wins, else the wrapper pid (foreground command)
+        local live_root="" alive=0 bgp
+        for bgp in ${BGPIDC[$path]:-}; do [ -n "${PS_RSS[$bgp]+x}" ] && { live_root="$bgp"; alive=1; break; }; done
+        if (( ! alive )) && [ -z "${DONEC[$path]+x}" ]; then
+            if   [ -n "${PIDC[$path]:-}" ] && [ -n "${PS_RSS[${PIDC[$path]}]+x}" ]; then live_root="${PIDC[$path]}"; alive=1
+            elif [ -z "${PIDC[$path]:-}" ] && (( now - MT[i] <= 15 )); then alive=1; fi
+        fi
+        local ram="-" cpud="-" endd
+        if (( alive )); then
+            running=$((running+1)); bp="● running"; bc=$'\033[1;32m'; endref="$now"; endd="-"
+            [ -n "$live_root" ] && { _aps_subtree "$live_root"; ram="$(( SUB_RSS / 1024 ))M"; cpud="${SUB_CPU}%"; }
+        elif [ -n "${DONEC[$path]+x}" ]; then
+            endref="${MT[i]}"; code="${DONEC[$path]}"; endd="${ENDC[$path]:--}"
             if [ "$code" = 0 ]; then bp="✔ exit 0"; bc=$'\033[32m'; else bp="✗ exit $code"; bc=$'\033[1;31m'; fi
         else
-            endref="$now"
-            # truly running only if the recorded pid is alive (in the ps snapshot);
-            # if no pid was captured, fall back to "modified within 15s". Otherwise it was killed.
-            if { [ -n "${PIDC[$path]:-}" ] && [ -n "${PS_RSS[${PIDC[$path]}]+x}" ]; } \
-               || { [ -z "${PIDC[$path]:-}" ] && (( now - MT[i] <= 15 )); }; then
-                running=$((running+1)); bp="● running"; bc=$'\033[1;32m'
-            else
-                bp="● stalled"; bc=$'\033[33m'
-            fi
+            endref="$now"; endd="-"; bp="● stalled"; bc=$'\033[33m'
         fi
         printf -v start '%(%H:%M:%S)T' "$ep"
         ds=$(( endref - ep ))
@@ -206,11 +216,6 @@ function _aps_refresh2 {
         else printf -v CD_i '%dh%02dm' "$((ds/3600))" "$(((ds%3600)/60))"; fi
         sz="${SZ[i]}"
         if   (( sz >= 1048576 )); then szh="$((sz/1048576))M"; elif (( sz >= 1024 )); then szh="$((sz/1024))K"; else szh="${sz}B"; fi
-        local endd="${ENDC[$path]:--}" ram="-" cpud="-"   # ASCII '-' placeholder keeps columns aligned
-        if [ -z "${DONEC[$path]+x}" ] && [ -n "${PIDC[$path]:-}" ] && [ -n "${PS_RSS[${PIDC[$path]}]+x}" ]; then
-            _aps_subtree "${PIDC[$path]}"
-            ram="$(( SUB_RSS / 1024 ))M"; cpud="${SUB_CPU}%"
-        fi
         local dd="${DESCC[$path]:-}"; [ -z "$dd" ] && dd="-"
         CS+=("$start"); CD+=("$CD_i"); CEND+=("$endd"); CBP+=("$bp"); CBC+=("$bc"); CCPU+=("$cpud"); CRAM+=("$ram"); CTMUX+=("${TMUXC[$path]:--}"); CDESC+=("$dd"); CCMD+=("${CMDC[$path]}")
     done
@@ -259,7 +264,7 @@ function _aps_setmode {
 function agentps {
     local scope="${1:-all}" cur=0 key seq n _aps_quit=0 selmode focus=list jbuf=""
     local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=() CDESC=()
-    local -A EPC=() CMDC=() DESCC=() DONEC=() ENDC=() PIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() _APS_MODE=()
+    local -A EPC=() CMDC=() DESCC=() DONEC=() ENDC=() PIDC=() BGPIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() _APS_MODE=()
     local SUB_RSS=0 SUB_CPU=0
     local HEADER="" CD_i top=0 TROWS=40 TCOLS=200
     local defmode; defmode="$(cat "$RUNLOG_DIR/.defaultmode" 2>/dev/null)"; case "$defmode" in t|v|c|m) : ;; *) defmode=t ;; esac
@@ -407,7 +412,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
               "  agentps list [all]        one-shot table (no TUI)" \
               "  agentps clean [days]      prune capture logs older than N days (default 7)" \
               "" \
-              "keys:  up/down select . left/right view-mode (tail/vim/pager/cmd) . n=this-session-only . Enter open . q quit" ;;
+              "keys:  up/down select . left/right view-mode (tail/vim/pager/cmd) . n=this-session . Enter open . q quit" ;;
         *)              agentps "${1:-}" ;;
     esac
 fi
