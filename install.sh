@@ -4,7 +4,7 @@
 #
 # Installs the `agentps` CLI, the shared capture core, and a capture adapter for
 # each AI coding agent you use (Claude Code, Codex, OpenCode). Every agent tees
-# its shell commands into ~/.runlogs so `agentps` can show them live.
+# its shell commands into ~/.local/share/agentps/runlogs so `agentps` can show them live.
 #
 #   ./install.sh                      install CLI + core + auto-detected agents
 #   ./install.sh --agent claude,opencode   install for specific agents
@@ -153,5 +153,5 @@ else
         case "$ag" in claude) unwire_claude ;; codex) unwire_codex ;; opencode) unwire_opencode ;; esac
     done
     rm -f "$BIN_DEST" "$CORE_DEST"; rmdir "$COREDIR" 2>/dev/null || true
-    msg "Removed CLI, core, and all adapters. Capture logs under ~/.runlogs were left intact."
+    msg "Removed CLI, core, and all adapters. Capture logs under ~/.local/share/agentps/runlogs were left intact."
 fi

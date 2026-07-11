@@ -7,7 +7,7 @@
 # GNU General Public License v3.0 or later — see LICENSE / <https://www.gnu.org/licenses/>.
 #
 # agentps — the viewer half: shows the processes your AI coding agent runs.
-# Reads per-command logs under ~/.runlogs (written by the capture adapters for
+# Reads per-command logs under ~/.local/share/agentps/runlogs (written by the capture adapters for
 # Claude Code / Codex / OpenCode) and renders them live.
 # Part of https://github.com/DanielCarmon/agentps.
 #
@@ -15,10 +15,10 @@
 #   ↑/↓ (or j/k)  select a process     ←/→ (or h/l)  change its view mode (tail/vim/pager)
 #   Enter         open it              Tab           focus the "go to #" field
 #   a=all sessions   n=newest-only     q/Esc=quit
-# Each task remembers its last view mode (persisted in ~/.runlogs/.viewmodes/.defaultmode).
+# Each task remembers its last view mode (persisted in ~/.local/share/agentps/runlogs/.viewmodes/.defaultmode).
 # Subcommands: agentps watch (dashboard) · last (tail newest) · list (one-shot) · clean [days].
 
-export RUNLOG_DIR="${RUNLOG_DIR:-$HOME/.runlogs}"
+export RUNLOG_DIR="${RUNLOG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/agentps/runlogs}"
 _APS_SELF="${BASH_SOURCE[0]:-$0}"   # this file's own path, so subshells can re-source it
 
 # ---------- shared data helpers ----------
@@ -65,9 +65,12 @@ function _aps_start_epoch {
 }
 
 function _aps_status {
-    local code
+    local code pid
     code="$(grep -m1 '^### \[exit' "$1" 2>/dev/null | sed -E 's/.*\[exit ([0-9]+)\].*/\1/')"
-    [ -n "$code" ] && echo "DONE|$code" || echo "RUN|-"
+    [ -n "$code" ] && { echo "DONE|$code"; return; }
+    # no exit footer: truly running only if the recorded pid is still alive; else it was killed
+    pid="$(grep -m1 '^### pid: ' "$1" 2>/dev/null | sed 's/^### pid: //')"
+    { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } && echo "RUN|-" || echo "STALL|-"
 }
 
 function _aps_fmt_dur {
@@ -84,11 +87,11 @@ function _aps_fields {
     now="$(date +%s)"; se="$(_aps_start_epoch "$f")"; me="$(stat -c %Y "$f" 2>/dev/null || echo "$now")"
     IFS='|' read -r st code < <(_aps_status "$f")
     start="$(date -d "@$se" '+%H:%M:%S' 2>/dev/null)"
-    [ "$st" = "RUN" ] && endref="$now" || endref="$me"
+    [ "$st" = "DONE" ] && endref="$me" || endref="$now"
     dur="$(_aps_fmt_dur "$(( endref - se ))")"
-    if [ "$st" = "RUN" ]; then
-        if [ "$(( now - me ))" -gt 15 ]; then bplain="● stalled"; bcolor=$'\033[33m'; else bplain="● running"; bcolor=$'\033[1;32m'; fi
-    elif [ "$code" = "0" ]; then bplain="✔ exit 0"; bcolor=$'\033[32m'
+    if   [ "$st" = "RUN" ];   then bplain="● running"; bcolor=$'\033[1;32m'
+    elif [ "$st" = "STALL" ]; then bplain="● stalled"; bcolor=$'\033[33m'
+    elif [ "$code" = "0" ];   then bplain="✔ exit 0";  bcolor=$'\033[32m'
     else bplain="✗ exit $code"; bcolor=$'\033[1;31m'; fi
     desc="$(grep -m1 '^### desc:' "$f" 2>/dev/null | sed 's/^### desc: //' | tr '\n\t' '  ')"; desc="${desc:--}"; desc="${desc:0:34}"
     cmd="$(grep -m1 '^### cmd :' "$f" 2>/dev/null | sed 's/^### cmd : //' | tr '\n\t' '  ')"; cmd="${cmd:0:70}"
@@ -186,8 +189,15 @@ function _aps_refresh2 {
             endref="${MT[i]}"; code="${DONEC[$path]}"
             if [ "$code" = 0 ]; then bp="✔ exit 0"; bc=$'\033[32m'; else bp="✗ exit $code"; bc=$'\033[1;31m'; fi
         else
-            endref="$now"; running=$((running+1))
-            if (( now - MT[i] > 15 )); then bp="● stalled"; bc=$'\033[33m'; else bp="● running"; bc=$'\033[1;32m'; fi
+            endref="$now"
+            # truly running only if the recorded pid is alive (in the ps snapshot);
+            # if no pid was captured, fall back to "modified within 15s". Otherwise it was killed.
+            if { [ -n "${PIDC[$path]:-}" ] && [ -n "${PS_RSS[${PIDC[$path]}]+x}" ]; } \
+               || { [ -z "${PIDC[$path]:-}" ] && (( now - MT[i] <= 15 )); }; then
+                running=$((running+1)); bp="● running"; bc=$'\033[1;32m'
+            else
+                bp="● stalled"; bc=$'\033[33m'
+            fi
         fi
         printf -v start '%(%H:%M:%S)T' "$ep"
         ds=$(( endref - ep ))
@@ -320,7 +330,9 @@ function agentps {
             printf -v row '  \033[2mgo to #: [Tab]      \342\206\221\342\206\223 select \302\267 \342\206\220\342\206\222 mode \302\267 Enter open \302\267 q quit\033[0m'
         fi
         out+="$row"$'\033[K\033[J'
-        printf '%s' "$out"
+        # coalesce held-key bursts: only repaint when the input buffer is drained,
+        # so scrolling stays reactive and stops the instant you release the key.
+        IFS= read -rsn1 -t 0 2>/dev/null || printf '%s' "$out"
 
         # ---- input; refresh ONLY on idle timeout (never blocks a keypress) ----
         IFS= read -rsn1 -t 1 key || { _aps_refresh2; continue; }

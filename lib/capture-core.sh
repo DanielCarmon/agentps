@@ -10,10 +10,10 @@
 #   PV_CMD      required — the original shell command to run
 #   PV_DESC     the agent's one-line command description (optional)
 #   PV_AGENT    agent name for the log (claude|codex|opencode|...); default "unknown"
-#   PV_SESSION  session id (becomes the ~/.runlogs/<session>/ dir); default "nosession"
+#   PV_SESSION  session id (becomes the ~/.local/share/agentps/runlogs/<session>/ dir); default "nosession"
 #   PV_CWD      working directory to record; default $PWD
 #   PV_TMUX     tmux session name to record (optional)
-#   RUNLOG_DIR  base dir; default ~/.runlogs
+#   RUNLOG_DIR  base dir; default ~/.local/share/agentps/runlogs
 #
 # Output: prints the WRAPPED command on stdout (caller substitutes it for PV_CMD).
 # Side effect: writes the log header for this command. Fail-open: on any error it
@@ -25,7 +25,7 @@ cmd="${PV_CMD:-}"
 # never double-wrap
 case "$cmd" in *"__RUNLOG_TEE__"*) printf '%s' "$cmd"; exit 0 ;; esac
 
-RUNLOG_DIR="${RUNLOG_DIR:-$HOME/.runlogs}"
+RUNLOG_DIR="${RUNLOG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/agentps/runlogs}"
 agent="${PV_AGENT:-unknown}"
 session="${PV_SESSION:-nosession}"; session="${session//[^A-Za-z0-9._-]/_}"
 cwd="${PV_CWD:-$PWD}"

@@ -1,7 +1,7 @@
 // agentps capture plugin for OpenCode.
 // Vibecoded by Daniel Carmon and Claude Opus 4.8.  GPL-3.0-or-later.
 //
-// Tees every bash command OpenCode runs into ~/.runlogs so `agentps` can show
+// Tees every bash command OpenCode runs into ~/.local/share/agentps/runlogs so `agentps` can show
 // it live. Delegates the actual wrapping to the shared, agent-agnostic core at
 // ~/.local/share/agentps/capture-core.sh, so Claude Code / Codex / OpenCode all
 // produce identical logs.

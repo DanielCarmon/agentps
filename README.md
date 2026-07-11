@@ -5,7 +5,7 @@ command it runs.
 
 Works with **Claude Code**, **Codex**, and **OpenCode**. When your agent runs a
 shell command, agentps tees it — automatically, no cooperation from the model —
-into a per-command logfile under `~/.runlogs/`, and a terminal UI lets you browse
+into a per-command logfile under `~/.local/share/agentps/runlogs/`, and a terminal UI lets you browse
 them, follow any one live, and watch real-time **CPU/RAM** per process.
 
 ```
@@ -59,7 +59,7 @@ agentps clean [days]    # prune capture logs older than N days (default 7)
 One agnostic core, a thin adapter per agent:
 
 ```
-bin/agentps               the viewer (agent-agnostic; just reads ~/.runlogs)
+bin/agentps               the viewer (agent-agnostic; just reads ~/.local/share/agentps/runlogs)
 lib/capture-core.sh       shared: wraps a command as { cmd; } 2>&1 | tee <log>,
                           preserving exit code, recording cmd/desc/cwd/tmux/pid/agent
 adapters/
@@ -75,7 +75,7 @@ Disable capture per-session with `RUNLOG_HOOK_OFF=1`.
 ## Uninstall
 
 ```sh
-make uninstall     # or: ./install.sh uninstall  — removes CLI, core, all adapters; keeps ~/.runlogs
+make uninstall     # or: ./install.sh uninstall  — removes CLI, core, all adapters; keeps ~/.local/share/agentps/runlogs
 ```
 
 ## License
