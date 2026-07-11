@@ -157,6 +157,17 @@ function _aps_refresh2 {
             PS_RSS["$_pid"]="$_rss"; PS_CPU["$_pid"]="$_cpu"; PS_CH["$_ppid"]+="$_pid "
         done < <(ps -eo pid=,ppid=,rss=,pcpu= 2>/dev/null)
     fi
+    # map logpath -> live descendant pids via the AGENTPS_JOB env marker (survives detach; catches
+    # foreground children, backgrounded jobs, and fully-detached daemons alike). One grep to scan.
+    JOBPIDS=()
+    if ((${#F[@]})); then
+        local _envf _jp _jid
+        while IFS= read -r _envf; do
+            _jp="${_envf#/proc/}"; _jp="${_jp%/environ}"
+            _jid="$( { tr '\0' '\n' < "$_envf"; } 2>/dev/null | sed -n 's/^AGENTPS_JOB=//p' | head -1)"
+            [ -n "$_jid" ] && JOBPIDS["$_jid"]+="$_jp "
+        done < <(grep -zla 'AGENTPS_JOB=' /proc/[0-9]*/environ 2>/dev/null)
+    fi
     printf -v now '%(%s)T' -1
     CS=(); CD=(); CBP=(); CBC=(); CSZ=(); CCMD=()
     for ((i=0; i<${#F[@]}; i++)); do
@@ -192,17 +203,23 @@ function _aps_refresh2 {
         fi
         [ -z "$minstart" ] && minstart="$ep"; (( ep < minstart )) && minstart="$ep"
         (( MT[i] > maxact )) && maxact="${MT[i]}"
-        # live root pid: an alive detached (bg) job wins, else the wrapper pid (foreground command)
-        local live_root="" alive=0 bgp
-        for bgp in ${BGPIDC[$path]:-}; do [ -n "${PS_RSS[$bgp]+x}" ] && { live_root="$bgp"; alive=1; break; }; done
-        if (( ! alive )) && [ -z "${DONEC[$path]+x}" ]; then
-            if   [ -n "${PIDC[$path]:-}" ] && [ -n "${PS_RSS[${PIDC[$path]}]+x}" ]; then live_root="${PIDC[$path]}"; alive=1
-            elif [ -z "${PIDC[$path]:-}" ] && (( now - MT[i] <= 15 )); then alive=1; fi
+        local alive=0 ram="-" cpud="-" endd live_root="" bgp
+        local __jpids="${JOBPIDS[$path]:-}"
+        if [ -n "$__jpids" ]; then                                          # env-marker: exact live descendants
+            alive=1
+            local __jr=0 __jc=0 __jp __c
+            for __jp in $__jpids; do __jr=$(( __jr + ${PS_RSS[$__jp]:-0} )); __c="${PS_CPU[$__jp]:-0}"; __jc=$(( __jc + ${__c%%.*} )); done
+            ram="$(( __jr / 1024 ))M"; cpud="${__jc}%"
+        else                                                               # fallback for logs without the marker
+            for bgp in ${BGPIDC[$path]:-}; do [ -n "${PS_RSS[$bgp]+x}" ] && { live_root="$bgp"; alive=1; break; }; done
+            if (( ! alive )) && [ -z "${DONEC[$path]+x}" ]; then
+                if   [ -n "${PIDC[$path]:-}" ] && [ -n "${PS_RSS[${PIDC[$path]}]+x}" ]; then live_root="${PIDC[$path]}"; alive=1
+                elif [ -z "${PIDC[$path]:-}" ] && (( now - MT[i] <= 15 )); then alive=1; fi
+            fi
+            (( alive )) && [ -n "$live_root" ] && { _aps_subtree "$live_root"; ram="$(( SUB_RSS / 1024 ))M"; cpud="${SUB_CPU}%"; }
         fi
-        local ram="-" cpud="-" endd
         if (( alive )); then
             running=$((running+1)); bp="● running"; bc=$'\033[1;32m'; endref="$now"; endd="-"
-            [ -n "$live_root" ] && { _aps_subtree "$live_root"; ram="$(( SUB_RSS / 1024 ))M"; cpud="${SUB_CPU}%"; }
         elif [ -n "${DONEC[$path]+x}" ]; then
             endref="${MT[i]}"; code="${DONEC[$path]}"; endd="${ENDC[$path]:--}"
             if [ "$code" = 0 ]; then bp="✔ exit 0"; bc=$'\033[32m'; else bp="✗ exit $code"; bc=$'\033[1;31m'; fi
@@ -264,7 +281,7 @@ function _aps_setmode {
 function agentps {
     local scope="${1:-all}" cur=0 key seq n _aps_quit=0 selmode focus=list jbuf=""
     local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=() CDESC=()
-    local -A EPC=() CMDC=() DESCC=() DONEC=() ENDC=() PIDC=() BGPIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() _APS_MODE=()
+    local -A EPC=() CMDC=() DESCC=() DONEC=() ENDC=() PIDC=() BGPIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() JOBPIDS=() _APS_MODE=()
     local SUB_RSS=0 SUB_CPU=0
     local HEADER="" CD_i top=0 TROWS=40 TCOLS=200
     local defmode; defmode="$(cat "$RUNLOG_DIR/.defaultmode" 2>/dev/null)"; case "$defmode" in t|v|c|m) : ;; *) defmode=t ;; esac
@@ -404,15 +421,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         -h|--help|help)
             printf '%s\n' \
               "agentps — view the processes your AI coding agent runs (Claude Code, Codex, OpenCode)" \
-              "" \
-              "usage:" \
+              "" "usage:" \
               "  agentps [all|<session>]   interactive TUI (default: ALL sessions/agents)" \
               "  agentps watch [all]       read-only auto-refreshing dashboard" \
               "  agentps last              live-tail the most recent command" \
               "  agentps list [all]        one-shot table (no TUI)" \
               "  agentps clean [days]      prune capture logs older than N days (default 7)" \
-              "" \
-              "keys:  up/down select . left/right view-mode (tail/vim/pager/cmd) . n=this-session . Enter open . q quit" ;;
+              "" "keys:  up/down select . left/right view-mode (tail/vim/pager/cmd) . n=this-session . Enter open . q quit" ;;
         *)              agentps "${1:-}" ;;
     esac
 fi

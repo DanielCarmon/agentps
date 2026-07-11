@@ -55,6 +55,7 @@ qlog="$(printf '%q' "$log")"; nl=$'\n'
 # After the command, record any background jobs it left (jobs -p) as ### bgpid:
 # lines — so detached long jobs (setsid/nohup/&) stay visible as "running".
 wrapped="export PYTHONUNBUFFERED=1${nl}"
+wrapped+="export AGENTPS_JOB=${qlog}${nl}"   # inherited by every descendant -> agentps finds live jobs via /proc even after detach
 wrapped+="printf '### pid: %s\\n' \$\$ >> ${qlog}${nl}"
 wrapped+="{${nl}${cmd}${nl}"
 wrapped+="__aps_rc=\$?; jobs -p 2>/dev/null | sed 's/^/### bgpid: /' >> ${qlog}; (exit \$__aps_rc)${nl}"
