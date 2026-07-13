@@ -3,7 +3,7 @@
 # agentps — home: https://github.com/DanielCarmon/agentps  (GPL-3.0-or-later)
 # Vibecoded by Daniel Carmon and Claude Opus 4.8.
 #
-AGENTPS_VERSION="0.1.10"
+AGENTPS_VERSION="0.1.11"
 # agentps — the viewer half: shows the processes your AI coding agent runs.
 # Reads per-command logs under ~/.local/share/agentps/runlogs (written by the capture adapters for
 # Claude Code / Codex / OpenCode) and renders them live.
@@ -167,6 +167,9 @@ function _aps_run {
     esac
 }
 
+# reorder a viewer array (found via dynamic scope) by the index permutation in $_ord
+function _aps_reorder { local -n _a="$1"; local -a _n=(); local _j; for _j in "${_ord[@]}"; do _n+=("${_a[$_j]}"); done; _a=("${_n[@]}"); }
+
 # ---------- fast cached refresh for the interactive viewer (dynamic-scope into the viewer) ----------
 # steady state: 1 find + 1 sort + 1 tail-per-running-file. epoch/command cached forever per file.
 function _aps_refresh2 {
@@ -197,7 +200,7 @@ function _aps_refresh2 {
         done < <(grep -zla 'AGENTPS_JOB=' /proc/[0-9]*/environ 2>/dev/null)
     fi
     printf -v now '%(%s)T' -1
-    CS=(); CD=(); CEND=(); CBP=(); CBC=(); CCPU=(); CRAM=(); CTMUX=(); CDESC=(); CCMD=()   # reset ALL per-row arrays (must stay in lock-step)
+    CS=(); CD=(); CEND=(); CBP=(); CBC=(); CCPU=(); CRAM=(); CTMUX=(); CDESC=(); CCMD=(); CALIVE=()   # reset ALL per-row arrays (must stay in lock-step)
     for ((i=0; i<${#F[@]}; i++)); do
         path="${F[i]}"
         [ -z "${EPC[$path]+x}" ] && EPC["$path"]="$(_aps_start_epoch "$path")"      # date fork ONCE per file
@@ -262,8 +265,15 @@ function _aps_refresh2 {
         sz="${SZ[i]}"
         if   (( sz >= 1048576 )); then szh="$((sz/1048576))M"; elif (( sz >= 1024 )); then szh="$((sz/1024))K"; else szh="${sz}B"; fi
         local dd="${DESCC[$path]:-}"; [ -z "$dd" ] && dd="-"
-        CS+=("$start"); CD+=("$CD_i"); CEND+=("$endd"); CBP+=("$bp"); CBC+=("$bc"); CCPU+=("$cpud"); CRAM+=("$ram"); CTMUX+=("${TMUXC[$path]:--}"); CDESC+=("$dd"); CCMD+=("${CMDC[$path]}")
+        CS+=("$start"); CD+=("$CD_i"); CEND+=("$endd"); CBP+=("$bp"); CBC+=("$bc"); CCPU+=("$cpud"); CRAM+=("$ram"); CTMUX+=("${TMUXC[$path]:--}"); CDESC+=("$dd"); CCMD+=("${CMDC[$path]}"); CALIVE+=("$alive")
     done
+    # stable partition: live rows first (still newest-first), then dead rows below.
+    # NLIVE marks the boundary so the viewer can draw a divider between the groups.
+    local _ord=() _arr
+    for ((i=0; i<${#F[@]}; i++)); do [ "${CALIVE[i]}" = 1 ] && _ord+=("$i"); done
+    for ((i=0; i<${#F[@]}; i++)); do [ "${CALIVE[i]}" != 1 ] && _ord+=("$i"); done
+    for _arr in F MT SZ CS CD CEND CBP CBC CCPU CRAM CTMUX CDESC CCMD CALIVE; do _aps_reorder "$_arr"; done
+    NLIVE=$running
     local lbl dir hs="" ha=""
     if [ "$scope" = all ]; then lbl="ALL sessions"; elif ((${#F[@]})); then dir="${F[0]%/*}"; lbl="${dir##*/}"; else lbl="(none)"; fi
     if ((${#F[@]})); then printf -v hs '%(%Y-%m-%d %H:%M:%S)T' "$minstart"; printf -v ha '%(%H:%M:%S)T' "$maxact"; fi
@@ -308,7 +318,8 @@ function _aps_setmode {
 # ---------- main interactive viewer ----------
 function agentps {
     local scope="${1:-all}" cur=0 key seq n _aps_quit=0 selmode focus=list jbuf=""
-    local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=() CDESC=()
+    local -a F=() MT=() SZ=() CS=() CD=() CBP=() CBC=() CSZ=() CCMD=() CEND=() CRAM=() CCPU=() CTMUX=() CDESC=() CALIVE=()
+    local NLIVE=0
     local -A EPC=() CMDC=() DESCC=() DONEC=() ENDC=() PIDC=() BGPIDC=() TMUXC=() PS_RSS=() PS_CPU=() PS_CH=() JOBPIDS=() _APS_MODE=()
     local SUB_RSS=0 SUB_CPU=0
     local HEADER="" CD_i top=0 TROWS=40 TCOLS=200
@@ -351,6 +362,10 @@ function agentps {
         (( n == 0 )) && out+=$'  (no agent-spawned processes captured)\033[K\n'
         local sess tm dsc vend=$(( top + listcap )); (( vend > n )) && vend=$n
         for ((i=top; i<vend; i++)); do
+            # divider between live (above) and finished/stalled (below) groups
+            if (( NLIVE > 0 && NLIVE < n && i == NLIVE )); then
+                out+=$'  \033[2m'"${dashes:0:$(( TCOLS>6 ? TCOLS-2 : 120 ))}"$'\033[0m\033[K\n'
+            fi
             sess="${F[i]%/*}"; sess="${sess##*/}"; sess="${sess:0:8}"
             tm="${CTMUX[i]}"; (( ${#tm} > TMUXW )) && tm="${tm:0:TMUXW}"
             dsc="${CDESC[i]}"; (( ${#dsc} > DESCW )) && dsc="${dsc:0:DESCW}"
