@@ -1,6 +1,6 @@
 {
   "name": "agentps",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "ps/top for your AI coding agent — see and live-watch every shell command Claude Code, Codex, or OpenCode runs, with live CPU/RAM per process.",
   "keywords": [
     "claude-code",

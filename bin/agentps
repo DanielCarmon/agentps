@@ -169,7 +169,7 @@ function _aps_refresh2 {
         done < <(grep -zla 'AGENTPS_JOB=' /proc/[0-9]*/environ 2>/dev/null)
     fi
     printf -v now '%(%s)T' -1
-    CS=(); CD=(); CBP=(); CBC=(); CSZ=(); CCMD=()
+    CS=(); CD=(); CEND=(); CBP=(); CBC=(); CCPU=(); CRAM=(); CTMUX=(); CDESC=(); CCMD=()   # reset ALL per-row arrays (must stay in lock-step)
     for ((i=0; i<${#F[@]}; i++)); do
         path="${F[i]}"
         [ -z "${EPC[$path]+x}" ] && EPC["$path"]="$(_aps_start_epoch "$path")"      # date fork ONCE per file
