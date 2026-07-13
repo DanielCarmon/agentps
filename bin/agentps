@@ -3,7 +3,7 @@
 # agentps — home: https://github.com/DanielCarmon/agentps  (GPL-3.0-or-later)
 # Vibecoded by Daniel Carmon and Claude Opus 4.8.
 #
-AGENTPS_VERSION="0.1.11"
+AGENTPS_VERSION="0.1.12"
 # agentps — the viewer half: shows the processes your AI coding agent runs.
 # Reads per-command logs under ~/.local/share/agentps/runlogs (written by the capture adapters for
 # Claude Code / Codex / OpenCode) and renders them live.
@@ -142,9 +142,37 @@ function _aps_table {
 }
 
 # ---------- followers ----------
+# A backgrounded/detached child often redirects its OWN output to a file (deploy & > x.log),
+# so the tee'd launcher log goes quiet while the real work streams elsewhere. The kernel knows
+# where that output goes: /proc/<pid>/fd/{1,2}. Resolve it for a still-live child of this log.
+# Prints "pid<TAB>outfile" for the first live child whose stdout/stderr is a real file distinct
+# from the tee log (pipes/ttys/dev-null/the log itself are skipped -> normal tee'd runs untouched).
+function _aps_sink {
+    local log="$1" pids p fd out
+    pids="${BGPIDC[$log]:-} ${JOBPIDS[$log]:-}"                 # viewer-scope caches (Enter path)
+    if [ -z "${pids// }" ]; then                               # standalone (e.g. proclast): read from the log
+        pids="$(tail -n 8 "$log" 2>/dev/null | sed -n 's/^### bgpid: //p' | tr '\n' ' ')"
+    fi
+    for p in $pids; do
+        [ -r "/proc/$p/fd/1" ] || continue
+        for fd in 1 2; do
+            out="$(readlink "/proc/$p/fd/$fd" 2>/dev/null)"
+            case "$out" in "$log"|''|/dev/*|pipe:*|socket:*|anon_inode:*) continue ;; esac
+            [ -f "$out" ] && { printf '%s\t%s' "$p" "$out"; return 0; }
+        done
+    done
+    return 1
+}
+
 function _aps_tail {
-    local f="$1" key tpid
-    printf '\033[2J\033[H\033[1;32m● live tail\033[0m  %s\n\033[2m  (Esc or q = back)\033[0m\n\n' "$f"
+    local f="$1" key tpid sink pid target
+    if sink="$(_aps_sink "$f")"; then                          # detached child writing its own file -> follow THAT
+        pid="${sink%%$'\t'*}"; target="${sink#*$'\t'}"
+        printf '\033[2J\033[H\033[1;32m● live tail\033[0m  \033[1m\342\206\222 %s\033[0m\n\033[2m  [following detached PID %s stdout; launcher %s exited \342\200\224 Esc or q = back]\033[0m\n\n' "$target" "$pid" "${f##*/}"
+        f="$target"
+    else
+        printf '\033[2J\033[H\033[1;32m● live tail\033[0m  %s\n\033[2m  (Esc or q = back)\033[0m\n\n' "$f"
+    fi
     tail -n 300 -F "$f" & tpid=$!
     while IFS= read -rsn1 key; do if [ "$key" = $'\e' ] || [ "$key" = q ] || [ "$key" = Q ]; then break; fi; done
     kill "$tpid" 2>/dev/null; wait "$tpid" 2>/dev/null; return 0
