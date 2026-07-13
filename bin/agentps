@@ -6,7 +6,7 @@
 # Copyright (C) 2026 Daniel Carmon.  Vibecoded by Daniel Carmon and Claude Opus 4.8.
 # GNU General Public License v3.0 or later — see LICENSE / <https://www.gnu.org/licenses/>.
 #
-AGENTPS_VERSION="0.1.9"
+AGENTPS_VERSION="0.1.10"
 # agentps — the viewer half: shows the processes your AI coding agent runs.
 # Reads per-command logs under ~/.local/share/agentps/runlogs (written by the capture adapters for
 # Claude Code / Codex / OpenCode) and renders them live.
