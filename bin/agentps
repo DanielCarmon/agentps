@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 #
-# agentps — see, and live-watch, every shell command your AI coding agent runs.
-# Works with Claude Code, Codex, and OpenCode. Home: https://github.com/DanielCarmon/agentps
-#
-# Copyright (C) 2026 Daniel Carmon.  Vibecoded by Daniel Carmon and Claude Opus 4.8.
-# GNU General Public License v3.0 or later — see LICENSE / <https://www.gnu.org/licenses/>.
+# agentps — home: https://github.com/DanielCarmon/agentps  (GPL-3.0-or-later)
+# Vibecoded by Daniel Carmon and Claude Opus 4.8.
 #
 AGENTPS_VERSION="0.1.10"
 # agentps — the viewer half: shows the processes your AI coding agent runs.
@@ -34,7 +31,7 @@ _aps_selfupdate() {
     [ -f "$state" ] && last="$(cat "$state" 2>/dev/null)"; [[ "$last" =~ ^[0-9]+$ ]] || last=0
     (( nowsec - last < 300 )) && return                                    # at most once / 5 min
     mkdir -p "${state%/*}" 2>/dev/null; printf '%s' "$nowsec" > "$state" 2>/dev/null
-    local base="https://raw.githubusercontent.com/DanielCarmon/agentps/master" rv
+    local base="${AGENTPS_UPDATE_URL:-https://raw.githubusercontent.com/DanielCarmon/agentps/master}" rv
     rv="$(_aps_fetch "$base/package.json" | sed -n 's/.*"version"[: ]*"\([^"]*\)".*/\1/p' | head -1)"
     [ -n "$rv" ] && [ "$rv" != "$AGENTPS_VERSION" ] || return
     [ "$(printf '%s\n%s\n' "$AGENTPS_VERSION" "$rv" | sort -V | tail -1)" = "$rv" ] || return   # only if strictly newer
@@ -442,26 +439,15 @@ function procs { _aps_table "${1:-}"; }
 function proclast { local f; f="$(_aps_logs all | while IFS= read -r x; do printf '%s\t%s\n' "$(stat -c %Y "$x" 2>/dev/null)" "$x"; done | sort -rn | head -1 | cut -f2-)"; [ -z "$f" ] && { echo "no agent-spawned processes captured"; return 1; }; _aps_tail "$f"; }
 function procclean { local days="${1:-7}"; find "$RUNLOG_DIR" -type f -name '*.log' -mtime +"$days" -delete 2>/dev/null; find "$RUNLOG_DIR" -mindepth 1 -type d -empty -delete 2>/dev/null; echo "pruned capture logs older than ${days}d"; }
 
-# ---------- CLI entrypoint (runs only when executed directly, not when sourced) ----------
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-    _aps_selfupdate "$@"     # auto-update from GitHub if a newer release exists (AGENTPS_NO_UPDATE=1 disables)
+    _aps_selfupdate "$@"
     case "${1:-}" in
-        watch)          shift; procwatch "${1:-all}" ;;
-        last)           proclast ;;
-        list|ls)        shift; procs "${1:-all}" ;;
-        clean)          shift; procclean "${1:-}" ;;
+        watch) shift; procwatch "${1:-all}" ;;
+        last) proclast ;;
+        list|ls) shift; procs "${1:-all}" ;;
+        clean) shift; procclean "${1:-}" ;;
         version|--version) echo "agentps $AGENTPS_VERSION" ;;
-        -h|--help|help)
-            printf '%s\n' \
-              "agentps $AGENTPS_VERSION — view the processes your AI coding agent runs (Claude Code, Codex, OpenCode)" \
-              "" "usage:" \
-              "  agentps [all|<session>]   interactive TUI (default: ALL sessions/agents)" \
-              "  agentps watch [all]       read-only auto-refreshing dashboard" \
-              "  agentps last              live-tail the most recent command" \
-              "  agentps list [all]        one-shot table (no TUI)" \
-              "  agentps clean [days]      prune capture logs older than N days (default 7)" \
-              "" "keys:  up/down select . left/right view-mode (tail/vim/pager/cmd) . n=this-session . Enter open . q quit" \
-              "" "auto-updates from GitHub on launch; set AGENTPS_NO_UPDATE=1 to disable." ;;
-        *)              agentps "${1:-}" ;;
+        -h|--help|help) echo "agentps $AGENTPS_VERSION — up/down select, left/right mode, Enter open, q quit. AGENTPS_NO_UPDATE=1 disables auto-update." ;;
+        *) agentps "${1:-}" ;;
     esac
 fi
